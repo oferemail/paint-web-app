@@ -31,6 +31,8 @@ const RESEND_FROM = env("RESEND_FROM", "Paint App <onboarding@resend.dev>");
 const GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID");
 const GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET");
 const OPENAI_API_KEY = env("OPENAI_API_KEY");
+const GEMINI_API_KEY = env("GEMINI_API_KEY");
+const GEMINI_MODEL = env("GEMINI_MODEL", "gemini-2.5-flash-image");
 const MAGIC_WINDOW_MS = 15 * 60 * 1000;
 const MAGIC_MAX_ATTEMPTS = 10;
 const MAGIC_STYLES = {
@@ -677,6 +679,7 @@ function createOpenAiHttpError(responseStatus, bodyText, requestId) {
 
   const message = providerMessage || `OpenAI request failed with status ${responseStatus}.`;
   const error = new Error(`openai_error:${responseStatus}:${message}`);
+  error.provider = "openai";
   error.openai = {
     status: responseStatus,
     message,
@@ -688,27 +691,38 @@ function createOpenAiHttpError(responseStatus, bodyText, requestId) {
   return error;
 }
 
-async function generateMagicImage(imageData, styleKey, maskData = "") {
-  const stylePrompt = MAGIC_STYLES[styleKey];
-  if (!stylePrompt) {
-    throw new Error("invalid_style");
+function createGeminiHttpError(responseStatus, bodyText) {
+  let providerMessage = "";
+  let providerCode = "";
+
+  try {
+    const parsed = JSON.parse(bodyText);
+    providerMessage = String(parsed?.error?.message || "");
+    providerCode = String(parsed?.error?.status || parsed?.error?.code || "");
+  } catch {
+    providerMessage = "";
   }
 
+  const message = providerMessage || `Gemini request failed with status ${responseStatus}.`;
+  const error = new Error(`gemini_error:${responseStatus}:${message}`);
+  error.provider = "gemini";
+  error.gemini = {
+    status: responseStatus,
+    message,
+    code: providerCode,
+    bodyText: String(bodyText || "").slice(0, 2000),
+  };
+  return error;
+}
+
+async function generateMagicImageOpenAi(imageBuffer, stylePrompt, maskData = "") {
   if (!OPENAI_API_KEY) {
     throw new Error("openai_not_configured");
   }
 
-  const imageBuffer = parsePngDataUrl(imageData);
-  if (!imageBuffer) {
-    throw new Error("invalid_image");
-  }
   const maskBuffer = parsePngDataUrl(maskData);
-
-  const editsModel = "dall-e-2";
-
-  const model = editsModel;
   const form = new FormData();
-  form.append("model", model);
+  form.append("model", "dall-e-2");
   form.append("prompt", stylePrompt);
   form.append("size", "512x512");
   form.append("n", "1");
@@ -735,7 +749,7 @@ async function generateMagicImage(imageData, styleKey, maskData = "") {
   const item = payload?.data?.[0];
   const b64 = item?.b64_json;
   if (b64 && typeof b64 === "string") {
-    return `data:image/png;base64,${b64}`;
+    return { imageData: `data:image/png;base64,${b64}`, provider: "openai" };
   }
 
   const imageUrl = item?.url;
@@ -745,10 +759,92 @@ async function generateMagicImage(imageData, styleKey, maskData = "") {
       throw new Error("invalid_openai_image_url");
     }
     const arr = await imageResponse.arrayBuffer();
-    return `data:image/png;base64,${Buffer.from(arr).toString("base64")}`;
+    return {
+      imageData: `data:image/png;base64,${Buffer.from(arr).toString("base64")}`,
+      provider: "openai",
+    };
   }
 
   throw new Error("invalid_openai_response");
+}
+
+async function generateMagicImageGemini(imageBuffer, stylePrompt) {
+  if (!GEMINI_API_KEY) {
+    throw new Error("gemini_not_configured");
+  }
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      GEMINI_MODEL
+    )}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": GEMINI_API_KEY,
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                inline_data: {
+                  mime_type: "image/png",
+                  data: imageBuffer.toString("base64"),
+                },
+              },
+              {
+                text: stylePrompt,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseModalities: ["IMAGE"],
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw createGeminiHttpError(response.status, errText);
+  }
+
+  const payload = await response.json();
+  const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
+
+  for (const candidate of candidates) {
+    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+    for (const part of parts) {
+      const inline = part?.inlineData || part?.inline_data;
+      const mimeType = String(inline?.mimeType || inline?.mime_type || "image/png");
+      const b64 = inline?.data;
+      if (b64 && typeof b64 === "string") {
+        return { imageData: `data:${mimeType};base64,${b64}`, provider: "gemini" };
+      }
+    }
+  }
+
+  throw new Error("invalid_gemini_response");
+}
+
+async function generateMagicImage(imageData, styleKey, maskData = "") {
+  const stylePrompt = MAGIC_STYLES[styleKey];
+  if (!stylePrompt) {
+    throw new Error("invalid_style");
+  }
+
+  const imageBuffer = parsePngDataUrl(imageData);
+  if (!imageBuffer) {
+    throw new Error("invalid_image");
+  }
+
+  if (GEMINI_API_KEY) {
+    return generateMagicImageGemini(imageBuffer, stylePrompt);
+  }
+
+  return generateMagicImageOpenAi(imageBuffer, stylePrompt, maskData);
 }
 
 async function handleRequest(req, res) {
@@ -1188,34 +1284,46 @@ async function handleRequest(req, res) {
       recordMagicAttempt(clientIp);
 
       try {
-        const generatedImageData = await generateMagicImage(
+        const generated = await generateMagicImage(
           imageData,
           String(style),
           String(maskData || "")
         );
-        sendJSON(res, 200, { imageData: generatedImageData });
+        sendJSON(res, 200, generated);
       } catch (error) {
         console.error("magic transform failure", error);
-        if (String(error.message || "").startsWith("openai_not_configured")) {
+        if (
+          String(error.message || "").startsWith("openai_not_configured") ||
+          String(error.message || "").startsWith("gemini_not_configured")
+        ) {
           sendJSON(res, 503, { error: "Magic feature not configured yet." });
           return;
         }
-        if (error?.openai?.status === 401 || error?.openai?.status === 403) {
-          sendJSON(res, 503, { error: "Magic is unavailable. Check OpenAI API billing/verification." });
+        const providerStatus = Number(error?.openai?.status || error?.gemini?.status || 0);
+        const providerMessage = String(
+          error?.openai?.message || error?.gemini?.message || "Invalid image generation request."
+        );
+        const providerLabel = String(error?.provider || "provider");
+        if (providerStatus === 401 || providerStatus === 403) {
+          sendJSON(res, 503, {
+            error: `Magic is unavailable. Check ${providerLabel} API key permissions and billing.`,
+          });
           return;
         }
-        if (error?.openai?.status === 429) {
-          sendJSON(res, 503, { error: "Magic is unavailable. OpenAI quota/billing limit reached." });
+        if (providerStatus === 429) {
+          sendJSON(res, 503, {
+            error: `Magic is unavailable. ${providerLabel} quota/rate limit reached.`,
+          });
           return;
         }
-        if (error?.openai?.status === 400) {
-          const detail = String(error?.openai?.message || "Invalid image edit request.");
+        if (providerStatus === 400) {
           const requestId = String(error?.openai?.requestId || "");
-          const normalizedDetail = detail.length > 240 ? `${detail.slice(0, 240)}...` : detail;
+          const normalizedDetail =
+            providerMessage.length > 240 ? `${providerMessage.slice(0, 240)}...` : providerMessage;
           sendJSON(res, 422, {
             error: requestId
-              ? `Magic request rejected: ${normalizedDetail} (ref: ${requestId})`
-              : `Magic request rejected: ${normalizedDetail}`,
+              ? `Magic request rejected by ${providerLabel}: ${normalizedDetail} (ref: ${requestId})`
+              : `Magic request rejected by ${providerLabel}: ${normalizedDetail}`,
           });
           return;
         }

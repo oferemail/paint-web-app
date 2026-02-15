@@ -51,14 +51,15 @@ Add these environment variables:
 Google OAuth callback URL:
 - `https://paint-web-app-taupe.vercel.app/api/oauth/google/callback`
 
-## Magic Transform (OpenAI)
+## Magic Transform (Gemini/OpenAI)
 
 Server-side env vars:
-- `OPENAI_API_KEY`
-- `OPENAI_IMAGE_MODEL` (optional, defaults to `gpt-image-1`)
+- `GEMINI_API_KEY` (preferred provider)
+- `GEMINI_MODEL` (optional, defaults to `gemini-2.5-flash-image`)
+- `OPENAI_API_KEY` (fallback if Gemini key is not set)
 
 Security notes:
-- OpenAI API key is never sent to the browser
+- Provider API keys are never sent to the browser
 - Style prompts are controlled on the server via allowlisted style IDs
 - Endpoint requires authentication and has IP-based rate limiting
 
