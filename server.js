@@ -3,7 +3,6 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { Pool } = require("pg");
-const nodemailer = require("nodemailer");
 
 const PORT = process.env.PORT || 3000;
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
@@ -24,6 +23,8 @@ const DATABASE_URL =
   process.env.POSTGRES_URL_NON_POOLING ||
   "";
 const APP_BASE_URL = process.env.APP_BASE_URL || "";
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const RESEND_FROM = process.env.RESEND_FROM || "Paint App <onboarding@resend.dev>";
 const SMTP_HOST = process.env.SMTP_HOST || "";
 const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
 const SMTP_USER = process.env.SMTP_USER || "";
@@ -42,17 +43,12 @@ const staticFiles = {
 
 let pool = null;
 let schemaReadyPromise = null;
-let mailer = null;
 const authAttempts = new Map();
 const resetAttempts = new Map();
 const DUMMY_PASSWORD_HASH = hashPassword("dummy-password-value");
 
 function hasDatabaseConfig() {
   return Boolean(DATABASE_URL);
-}
-
-function hasMailConfig() {
-  return Boolean(SMTP_HOST && SMTP_USER && SMTP_PASS && SMTP_FROM);
 }
 
 function getPool() {
@@ -70,23 +66,6 @@ function getPool() {
   }
 
   return pool;
-}
-
-function getMailer() {
-  if (!hasMailConfig()) {
-    return null;
-  }
-
-  if (!mailer) {
-    mailer = nodemailer.createTransport({
-      host: SMTP_HOST,
-      port: SMTP_PORT,
-      secure: SMTP_PORT === 465,
-      auth: { user: SMTP_USER, pass: SMTP_PASS },
-    });
-  }
-
-  return mailer;
 }
 
 async function ensureSchema() {
@@ -400,11 +379,6 @@ function getBaseUrl(req) {
 }
 
 async function sendPasswordResetEmail(email, resetLink) {
-  const transporter = getMailer();
-  if (!transporter) {
-    return;
-  }
-
   const subject = "Reset your Paint app password";
   const text = [
     "You requested a password reset.",
@@ -420,13 +394,46 @@ async function sendPasswordResetEmail(email, resetLink) {
     <p>If you did not request this, you can ignore this email.</p>
   `;
 
-  await transporter.sendMail({
-    from: SMTP_FROM,
-    to: email,
-    subject,
-    text,
-    html,
-  });
+  if (RESEND_API_KEY) {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: RESEND_FROM,
+        to: [email],
+        subject,
+        text,
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`resend_error:${response.status}:${errorBody}`);
+    }
+    return;
+  }
+
+  if (SMTP_HOST && SMTP_USER && SMTP_PASS && SMTP_FROM) {
+    const nodemailer = require("nodemailer");
+    const transporter = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_PORT === 465,
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
+    });
+
+    await transporter.sendMail({
+      from: SMTP_FROM,
+      to: email,
+      subject,
+      text,
+      html,
+    });
+  }
 }
 
 async function handleRequest(req, res) {

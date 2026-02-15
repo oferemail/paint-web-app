@@ -26,7 +26,11 @@ Schema is auto-created on first API request (`users` and `sessions` tables).
 
 ## Email (Password Reset)
 
-Set these environment variables to enable password reset emails:
+Preferred (no SMTP needed): Resend API
+- `RESEND_API_KEY`
+- `RESEND_FROM` (example: `Paint App <onboarding@resend.dev>`)
+
+Optional fallback (SMTP):
 - `APP_BASE_URL` (example: `https://paint-web-app-taupe.vercel.app`)
 - `SMTP_HOST`
 - `SMTP_PORT`
