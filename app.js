@@ -148,6 +148,25 @@ function currentCanvasData() {
   return canvas.toDataURL("image/png");
 }
 
+function buildMagicInputImageData() {
+  const magicCanvas = document.createElement("canvas");
+  magicCanvas.width = 1024;
+  magicCanvas.height = 1024;
+  const magicCtx = magicCanvas.getContext("2d");
+
+  magicCtx.fillStyle = "#ffffff";
+  magicCtx.fillRect(0, 0, magicCanvas.width, magicCanvas.height);
+
+  const scale = Math.min(magicCanvas.width / canvas.width, magicCanvas.height / canvas.height);
+  const drawWidth = canvas.width * scale;
+  const drawHeight = canvas.height * scale;
+  const offsetX = (magicCanvas.width - drawWidth) / 2;
+  const offsetY = (magicCanvas.height - drawHeight) / 2;
+
+  magicCtx.drawImage(canvas, offsetX, offsetY, drawWidth, drawHeight);
+  return magicCanvas.toDataURL("image/png");
+}
+
 function resetHistoryFromCanvas() {
   history = [currentCanvasData()];
   historyIndex = 0;
@@ -300,7 +319,7 @@ magicForm.addEventListener("submit", async (event) => {
     const result = await api("/api/magic-transform", {
       method: "POST",
       body: {
-        imageData: currentCanvasData(),
+        imageData: buildMagicInputImageData(),
         style,
       },
     });
