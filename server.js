@@ -686,47 +686,51 @@ async function generateMagicImage(imageData, styleKey) {
   let lastError = null;
 
   for (const model of candidateModels) {
-    const form = new FormData();
-    form.append("model", model);
-    form.append("prompt", stylePrompt);
-    form.append("size", "1024x1024");
-    form.append("quality", "low");
-    form.append("response_format", "b64_json");
-    form.append("output_format", "png");
-    form.append("image", new Blob([imageBuffer], { type: "image/png" }), "canvas.png");
+    const fieldNames = ["image", "image[]"];
 
-    const response = await fetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: form,
-    });
+    for (const fieldName of fieldNames) {
+      const form = new FormData();
+      form.append("model", model);
+      form.append("prompt", stylePrompt);
+      form.append("size", "1024x1024");
+      form.append("quality", "low");
+      form.append("response_format", "b64_json");
+      form.append("output_format", "png");
+      form.append(fieldName, new Blob([imageBuffer], { type: "image/png" }), "canvas.png");
 
-    if (!response.ok) {
-      const errText = await response.text();
-      lastError = new Error(`openai_error:${response.status}:${errText.slice(0, 500)}`);
-      continue;
-    }
+      const response = await fetch("https://api.openai.com/v1/images/edits", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+        },
+        body: form,
+      });
 
-    const payload = await response.json();
-    const item = payload?.data?.[0];
-    const b64 = item?.b64_json;
-    if (b64 && typeof b64 === "string") {
-      return `data:image/png;base64,${b64}`;
-    }
-
-    const imageUrl = item?.url;
-    if (imageUrl && typeof imageUrl === "string") {
-      const imageResponse = await fetch(imageUrl);
-      if (!imageResponse.ok) {
-        throw new Error("invalid_openai_image_url");
+      if (!response.ok) {
+        const errText = await response.text();
+        lastError = new Error(`openai_error:${response.status}:${errText.slice(0, 500)}`);
+        continue;
       }
-      const arr = await imageResponse.arrayBuffer();
-      return `data:image/png;base64,${Buffer.from(arr).toString("base64")}`;
-    }
 
-    lastError = new Error("invalid_openai_response");
+      const payload = await response.json();
+      const item = payload?.data?.[0];
+      const b64 = item?.b64_json;
+      if (b64 && typeof b64 === "string") {
+        return `data:image/png;base64,${b64}`;
+      }
+
+      const imageUrl = item?.url;
+      if (imageUrl && typeof imageUrl === "string") {
+        const imageResponse = await fetch(imageUrl);
+        if (!imageResponse.ok) {
+          throw new Error("invalid_openai_image_url");
+        }
+        const arr = await imageResponse.arrayBuffer();
+        return `data:image/png;base64,${Buffer.from(arr).toString("base64")}`;
+      }
+
+      lastError = new Error("invalid_openai_response");
+    }
   }
 
   if (lastError) {
@@ -1181,6 +1185,14 @@ async function handleRequest(req, res) {
           String(error.message || "").startsWith("openai_error:403")
         ) {
           sendJSON(res, 503, { error: "Magic is unavailable. Check OpenAI API billing/verification." });
+          return;
+        }
+        if (String(error.message || "").startsWith("openai_error:429")) {
+          sendJSON(res, 503, { error: "Magic is unavailable. OpenAI quota/billing limit reached." });
+          return;
+        }
+        if (String(error.message || "").startsWith("openai_error:400")) {
+          sendJSON(res, 422, { error: "Magic could not process this sketch. Try a clearer drawing and retry." });
           return;
         }
         sendJSON(res, 502, { error: "Magic generation failed. Please try again." });
