@@ -3,6 +3,7 @@
   --panel: #ffffff;
   --ink: #101418;
   --border: #d7dee5;
+  --primary: #0b6bcb;
 }
 
 * {
@@ -29,9 +30,54 @@ body {
   padding: 18px;
 }
 
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
 h1 {
   margin: 0 0 14px;
   font-size: 1.25rem;
+}
+
+h2 {
+  margin: 0 0 10px;
+  font-size: 1.05rem;
+}
+
+.status {
+  min-height: 1.2em;
+  margin: 0;
+  font-size: 0.9rem;
+  color: #5f6870;
+}
+
+.auth {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+form {
+  display: grid;
+  gap: 8px;
+}
+
+input[type="email"],
+input[type="password"] {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  font: inherit;
 }
 
 .toolbar {
@@ -61,6 +107,18 @@ button:hover {
   background: #f2f5f8;
 }
 
+button[type="submit"],
+#save-cloud {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+button[type="submit"]:hover,
+#save-cloud:hover {
+  background: #0959a8;
+}
+
 canvas {
   width: 100%;
   max-width: 100%;
@@ -68,4 +126,8 @@ canvas {
   border-radius: 10px;
   background: #fff;
   touch-action: none;
+}
+
+.hidden {
+  display: none;
 }
