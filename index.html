@@ -83,6 +83,8 @@
         </label>
 
         <button id="clear" type="button">Clear</button>
+        <button id="undo" type="button">Undo</button>
+        <button id="magic" type="button">Magic</button>
         <button id="save-png" type="button">Save PNG</button>
         <button id="save-cloud" type="button">Save Painting</button>
         <button id="signout" type="button">Sign Out</button>
@@ -91,6 +93,40 @@
       <canvas id="canvas" width="900" height="520" aria-label="Drawing canvas"></canvas>
     </section>
   </main>
+
+  <div id="magic-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="magic-title">
+    <div class="modal-panel">
+      <h3 id="magic-title">Magic Transform</h3>
+      <p class="modal-subtitle">Choose a style and transform your sketch into a realistic image.</p>
+      <form id="magic-form" class="magic-form">
+        <label class="style-option">
+          <input type="radio" name="magic-style" value="photoreal" checked />
+          <span>
+            <strong>Photo Real</strong>
+            <small>Natural lighting, camera-like realism, true-to-sketch composition.</small>
+          </span>
+        </label>
+        <label class="style-option">
+          <input type="radio" name="magic-style" value="cinematic" />
+          <span>
+            <strong>Cinematic Drama</strong>
+            <small>Film-like framing, rich contrast, and dramatic atmosphere.</small>
+          </span>
+        </label>
+        <label class="style-option">
+          <input type="radio" name="magic-style" value="fantasy" />
+          <span>
+            <strong>Fantasy Realism</strong>
+            <small>Realistic textures with imaginative fantasy mood and depth.</small>
+          </span>
+        </label>
+        <div class="modal-actions">
+          <button id="magic-cancel" type="button">Cancel</button>
+          <button id="magic-run" type="submit">Generate</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

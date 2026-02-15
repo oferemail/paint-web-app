@@ -305,6 +305,22 @@ button[type="submit"]:hover,
   background: var(--primary-strong);
 }
 
+#magic {
+  background: linear-gradient(135deg, #ff7e36 0%, #ff4f72 100%);
+  border: none;
+  color: #fff;
+  font-weight: 700;
+}
+
+#magic:hover {
+  filter: brightness(1.04);
+}
+
+#undo:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .link-button {
   margin-top: 10px;
   border: none;
@@ -348,6 +364,79 @@ canvas {
 
 .hidden {
   display: none;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 10, 22, 0.7);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  z-index: 20;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-panel {
+  width: min(520px, 100%);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fefefe 0%, var(--panel) 100%);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 52px rgba(4, 12, 24, 0.4);
+  padding: 18px;
+  color: var(--ink);
+}
+
+.modal-panel h3 {
+  margin: 0;
+}
+
+.modal-subtitle {
+  margin: 8px 0 14px;
+  color: var(--muted);
+}
+
+.magic-form {
+  display: grid;
+  gap: 10px;
+}
+
+.style-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px;
+  background: #fff;
+}
+
+.style-option input {
+  margin-top: 4px;
+}
+
+.style-option small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.modal-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+#magic-run {
+  background: linear-gradient(135deg, #ff7e36 0%, #ff4f72 100%);
+  border: none;
+  color: #fff;
 }
 
 .reset-shell {

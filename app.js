@@ -17,14 +17,24 @@ const ctx = canvas.getContext("2d");
 const colorInput = document.getElementById("color");
 const sizeInput = document.getElementById("size");
 const clearBtn = document.getElementById("clear");
+const undoBtn = document.getElementById("undo");
+const magicBtn = document.getElementById("magic");
 const savePngBtn = document.getElementById("save-png");
 const saveCloudBtn = document.getElementById("save-cloud");
 const signOutBtn = document.getElementById("signout");
+const magicModal = document.getElementById("magic-modal");
+const magicForm = document.getElementById("magic-form");
+const magicCancelBtn = document.getElementById("magic-cancel");
+const magicRunBtn = document.getElementById("magic-run");
 
 let drawing = false;
 let lastX = 0;
 let lastY = 0;
 let authMode = "signup";
+let strokeMoved = false;
+let history = [];
+let historyIndex = -1;
+const HISTORY_LIMIT = 30;
 
 ctx.lineCap = "round";
 ctx.lineJoin = "round";
@@ -108,6 +118,7 @@ function pointFromEvent(event) {
 
 function start(event) {
   drawing = true;
+  strokeMoved = false;
   const p = pointFromEvent(event);
   lastX = p.x;
   lastY = p.y;
@@ -121,12 +132,58 @@ function draw(event) {
   ctx.moveTo(lastX, lastY);
   ctx.lineTo(p.x, p.y);
   ctx.stroke();
+  strokeMoved = true;
   lastX = p.x;
   lastY = p.y;
 }
 
 function end() {
+  if (drawing && strokeMoved) {
+    pushHistoryState();
+  }
   drawing = false;
+}
+
+function currentCanvasData() {
+  return canvas.toDataURL("image/png");
+}
+
+function resetHistoryFromCanvas() {
+  history = [currentCanvasData()];
+  historyIndex = 0;
+  refreshUndoButton();
+}
+
+function pushHistoryState() {
+  const snapshot = currentCanvasData();
+  if (historyIndex >= 0 && history[historyIndex] === snapshot) {
+    return;
+  }
+
+  history = history.slice(0, historyIndex + 1);
+  history.push(snapshot);
+  if (history.length > HISTORY_LIMIT) {
+    history.shift();
+  }
+  historyIndex = history.length - 1;
+  refreshUndoButton();
+}
+
+function refreshUndoButton() {
+  undoBtn.disabled = historyIndex <= 0;
+}
+
+async function drawSnapshot(dataUrl) {
+  await new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      resolve();
+    };
+    image.onerror = reject;
+    image.src = dataUrl;
+  });
 }
 
 async function loadPainting() {
@@ -134,18 +191,12 @@ async function loadPainting() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   if (!result.imageData) {
+    resetHistoryFromCanvas();
     return;
   }
 
-  await new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => {
-      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-      resolve();
-    };
-    image.onerror = reject;
-    image.src = result.imageData;
-  });
+  await drawSnapshot(result.imageData);
+  resetHistoryFromCanvas();
 }
 
 async function handleAuthSuccess(email) {
@@ -173,7 +224,23 @@ sizeInput.addEventListener("input", () => {
 
 clearBtn.addEventListener("click", () => {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  pushHistoryState();
   setStatus("Canvas cleared locally. Click Save Painting to keep it.");
+});
+
+undoBtn.addEventListener("click", async () => {
+  if (historyIndex <= 0) {
+    return;
+  }
+
+  historyIndex -= 1;
+  refreshUndoButton();
+  try {
+    await drawSnapshot(history[historyIndex]);
+    setStatus("Undid last change.");
+  } catch {
+    setStatus("Unable to restore previous state.", true);
+  }
 });
 
 savePngBtn.addEventListener("click", () => {
@@ -192,6 +259,60 @@ saveCloudBtn.addEventListener("click", async () => {
     setStatus("Painting saved.");
   } catch (error) {
     setStatus(error.message, true);
+  }
+});
+
+function openMagicModal() {
+  magicModal.classList.remove("hidden");
+}
+
+function closeMagicModal() {
+  magicModal.classList.add("hidden");
+}
+
+magicBtn.addEventListener("click", () => {
+  openMagicModal();
+});
+
+magicCancelBtn.addEventListener("click", () => {
+  closeMagicModal();
+});
+
+magicModal.addEventListener("click", (event) => {
+  if (event.target === magicModal) {
+    closeMagicModal();
+  }
+});
+
+magicForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const style = new FormData(magicForm).get("magic-style");
+  if (!style) {
+    setStatus("Choose a style first.", true);
+    return;
+  }
+
+  magicRunBtn.disabled = true;
+  magicCancelBtn.disabled = true;
+  setStatus("Generating magic image...");
+
+  try {
+    const result = await api("/api/magic-transform", {
+      method: "POST",
+      body: {
+        imageData: currentCanvasData(),
+        style,
+      },
+    });
+    await drawSnapshot(result.imageData);
+    pushHistoryState();
+    closeMagicModal();
+    setStatus("Magic transform complete. Save Painting to store it.");
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    magicRunBtn.disabled = false;
+    magicCancelBtn.disabled = false;
   }
 });
 
@@ -280,5 +401,6 @@ authForm.addEventListener("submit", async (event) => {
     showAuth();
     setStatus("Sign in or create an account.");
     setAuthMode("signup");
+    resetHistoryFromCanvas();
   }
 })();

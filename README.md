@@ -6,6 +6,8 @@ A multi-user browser paint app with:
 - Sign out
 - Save and load each user's latest painting
 - Export PNG download
+- Magic transform button (OpenAI image edit from sketch to styled realistic image)
+- Local undo history for canvas changes
 
 ## Security
 
@@ -48,6 +50,17 @@ Add these environment variables:
 
 Google OAuth callback URL:
 - `https://paint-web-app-taupe.vercel.app/api/oauth/google/callback`
+
+## Magic Transform (OpenAI)
+
+Server-side env vars:
+- `OPENAI_API_KEY`
+- `OPENAI_IMAGE_MODEL` (optional, defaults to `gpt-image-1`)
+
+Security notes:
+- OpenAI API key is never sent to the browser
+- Style prompts are controlled on the server via allowlisted style IDs
+- Endpoint requires authentication and has IP-based rate limiting
 
 ## Run locally
 

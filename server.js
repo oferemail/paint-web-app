@@ -30,6 +30,18 @@ const RESEND_API_KEY = env("RESEND_API_KEY");
 const RESEND_FROM = env("RESEND_FROM", "Paint App <onboarding@resend.dev>");
 const GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID");
 const GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET");
+const OPENAI_API_KEY = env("OPENAI_API_KEY");
+const OPENAI_IMAGE_MODEL = env("OPENAI_IMAGE_MODEL", "gpt-image-1");
+const MAGIC_WINDOW_MS = 15 * 60 * 1000;
+const MAGIC_MAX_ATTEMPTS = 10;
+const MAGIC_STYLES = {
+  photoreal:
+    "Transform this sketch into a photorealistic image. Preserve the exact subject layout and major shapes from the input drawing. Add realistic materials, natural lighting, and coherent details.",
+  cinematic:
+    "Transform this sketch into a realistic cinematic scene. Keep the same composition from the sketch, with dramatic film lighting, atmospheric depth, and high-detail textures.",
+  fantasy:
+    "Transform this sketch into realistic fantasy concept art. Preserve the original composition, while adding believable textures, environmental storytelling, and rich but realistic lighting.",
+};
 
 const staticFiles = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
@@ -45,6 +57,7 @@ let pool = null;
 let schemaReadyPromise = null;
 const authAttempts = new Map();
 const resetAttempts = new Map();
+const magicAttempts = new Map();
 const DUMMY_PASSWORD_HASH = hashPassword("dummy-password-value");
 
 function hasDatabaseConfig() {
@@ -414,6 +427,14 @@ function recordForgotAttempt(ip) {
   recordAttemptWithMap(resetAttempts, `ip:${ip}`, PASSWORD_RESET_WINDOW_MS);
 }
 
+function isMagicRateLimited(ip) {
+  return isRateLimitedWithMap(magicAttempts, `ip:${ip}`, MAGIC_WINDOW_MS, MAGIC_MAX_ATTEMPTS);
+}
+
+function recordMagicAttempt(ip) {
+  recordAttemptWithMap(magicAttempts, `ip:${ip}`, MAGIC_WINDOW_MS);
+}
+
 async function applyAuthFailureDelay() {
   const jitter = Math.floor(Math.random() * AUTH_FAILURE_JITTER_MS);
   await sleep(AUTH_FAILURE_DELAY_MS + jitter);
@@ -626,6 +647,63 @@ async function sendPasswordResetEmail(email, resetLink) {
     return;
   }
 
+}
+
+function parsePngDataUrl(dataUrl) {
+  if (!hasValidPngDataUrl(dataUrl)) {
+    return null;
+  }
+
+  const base64Payload = dataUrl.slice("data:image/png;base64,".length);
+  try {
+    return Buffer.from(base64Payload, "base64");
+  } catch {
+    return null;
+  }
+}
+
+async function generateMagicImage(imageData, styleKey) {
+  const stylePrompt = MAGIC_STYLES[styleKey];
+  if (!stylePrompt) {
+    throw new Error("invalid_style");
+  }
+
+  if (!OPENAI_API_KEY) {
+    throw new Error("openai_not_configured");
+  }
+
+  const imageBuffer = parsePngDataUrl(imageData);
+  if (!imageBuffer) {
+    throw new Error("invalid_image");
+  }
+
+  const form = new FormData();
+  form.append("model", OPENAI_IMAGE_MODEL);
+  form.append("prompt", stylePrompt);
+  form.append("size", "1024x1024");
+  form.append("quality", "low");
+  form.append("image", new Blob([imageBuffer], { type: "image/png" }), "canvas.png");
+
+  const response = await fetch("https://api.openai.com/v1/images/edits", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: form,
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`openai_error:${response.status}:${errText.slice(0, 500)}`);
+  }
+
+  const payload = await response.json();
+  const b64 = payload?.data?.[0]?.b64_json;
+  if (!b64 || typeof b64 !== "string") {
+    throw new Error("invalid_openai_response");
+  }
+
+  return `data:image/png;base64,${b64}`;
 }
 
 async function handleRequest(req, res) {
@@ -1031,6 +1109,46 @@ async function handleRequest(req, res) {
       const db = getPool();
       await db.query("UPDATE users SET painting = $1 WHERE id = $2", [imageData, user.id]);
       sendJSON(res, 200, { ok: true });
+      return;
+    }
+
+    if (method === "POST" && url === "/api/magic-transform") {
+      const user = await getAuthenticatedUser(req);
+      if (!user) {
+        sendJSON(res, 401, { error: "Not authenticated." });
+        return;
+      }
+
+      const clientIp = getClientIp(req);
+      if (isMagicRateLimited(clientIp)) {
+        sendJSON(res, 429, { error: "Too many requests. Please try again later." });
+        return;
+      }
+
+      const { imageData, style } = await parseJSONBody(req);
+      if (!hasValidPngDataUrl(imageData)) {
+        sendJSON(res, 400, { error: "Invalid image payload." });
+        return;
+      }
+
+      if (!Object.prototype.hasOwnProperty.call(MAGIC_STYLES, String(style || ""))) {
+        sendJSON(res, 400, { error: "Invalid style." });
+        return;
+      }
+
+      recordMagicAttempt(clientIp);
+
+      try {
+        const generatedImageData = await generateMagicImage(imageData, String(style));
+        sendJSON(res, 200, { imageData: generatedImageData });
+      } catch (error) {
+        console.error("magic transform failure", error);
+        if (String(error.message || "").startsWith("openai_not_configured")) {
+          sendJSON(res, 503, { error: "Magic feature not configured yet." });
+          return;
+        }
+        sendJSON(res, 502, { error: "Magic generation failed. Please try again." });
+      }
       return;
     }
 
