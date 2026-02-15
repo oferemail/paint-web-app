@@ -218,7 +218,7 @@ forgotPasswordBtn.addEventListener("click", async () => {
 
   try {
     await api("/api/forgot-password", { method: "POST", body: { email } });
-    setStatus("If an account exists, a password reset email has been sent.");
+    setStatus("If that email exists, we sent a reset link. Check your inbox and spam folder, then follow the link to set a new password.");
   } catch (error) {
     setStatus(error.message, true);
   }

@@ -12,7 +12,6 @@ const AUTH_FAILURE_DELAY_MS = 250;
 const AUTH_FAILURE_JITTER_MS = 250;
 const PASSWORD_RESET_TOKEN_TTL_MS = 1000 * 60 * 30;
 const PASSWORD_RESET_IP_MAX_ATTEMPTS = 8;
-const PASSWORD_RESET_EMAIL_MAX_ATTEMPTS = 5;
 const PASSWORD_RESET_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_GENERIC_ERROR = "Invalid email or password.";
 const FORGOT_GENERIC_MESSAGE = "If an account exists for that email, a reset link has been sent.";
@@ -345,21 +344,11 @@ function clearAuthFailures(ip) {
 }
 
 function isForgotRateLimited(ip, email) {
-  if (isRateLimitedWithMap(resetAttempts, `ip:${ip}`, PASSWORD_RESET_WINDOW_MS, PASSWORD_RESET_IP_MAX_ATTEMPTS)) {
-    return true;
-  }
-
-  return isRateLimitedWithMap(
-    resetAttempts,
-    `email:${email}`,
-    PASSWORD_RESET_WINDOW_MS,
-    PASSWORD_RESET_EMAIL_MAX_ATTEMPTS
-  );
+  return isRateLimitedWithMap(resetAttempts, `ip:${ip}`, PASSWORD_RESET_WINDOW_MS, PASSWORD_RESET_IP_MAX_ATTEMPTS);
 }
 
-function recordForgotAttempt(ip, email) {
+function recordForgotAttempt(ip) {
   recordAttemptWithMap(resetAttempts, `ip:${ip}`, PASSWORD_RESET_WINDOW_MS);
-  recordAttemptWithMap(resetAttempts, `email:${email}`, PASSWORD_RESET_WINDOW_MS);
 }
 
 async function applyAuthFailureDelay() {
@@ -617,7 +606,7 @@ async function handleRequest(req, res) {
         return;
       }
 
-      recordForgotAttempt(clientIp, normalizedEmail);
+      recordForgotAttempt(clientIp);
 
       const db = getPool();
       const userResult = await db.query("SELECT id, email FROM users WHERE email = $1 LIMIT 1", [
@@ -626,6 +615,24 @@ async function handleRequest(req, res) {
       const user = userResult.rows[0];
 
       if (user) {
+        // Enforce one reset email per account per 15 minutes using DB state.
+        const recentResetResult = await db.query(
+          `
+            SELECT 1
+            FROM password_reset_tokens
+            WHERE user_id = $1
+              AND created_at > NOW() - INTERVAL '15 minutes'
+            LIMIT 1
+          `,
+          [user.id]
+        );
+
+        if (recentResetResult.rows[0]) {
+          await applyAuthFailureDelay();
+          sendJSON(res, 200, { ok: true, message: FORGOT_GENERIC_MESSAGE });
+          return;
+        }
+
         const token = createResetToken();
         const tokenHash = hashResetToken(token);
         const expiresAt = new Date(Date.now() + PASSWORD_RESET_TOKEN_TTL_MS);
