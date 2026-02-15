@@ -140,9 +140,11 @@ function isValidPassword(value) {
   return typeof value === "string" && value.length >= 8;
 }
 
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   try {
-    const { method, url } = req;
+    const rawUrl = req.url || "/";
+    const url = rawUrl.split("?")[0];
+    const { method } = req;
 
     if (method === "GET" && staticFiles[url]) {
       const filePath = path.join(__dirname, staticFiles[url].file);
@@ -285,8 +287,13 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     sendJSON(res, 500, { error: error.message || "Server error" });
   }
-});
+}
 
-server.listen(PORT, () => {
-  console.log(`Paint app running at http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  const server = http.createServer(handleRequest);
+  server.listen(PORT, () => {
+    console.log(`Paint app running at http://localhost:${PORT}`);
+  });
+} else {
+  module.exports = (req, res) => handleRequest(req, res);
+}
