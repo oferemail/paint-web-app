@@ -693,9 +693,7 @@ async function generateMagicImage(imageData, styleKey) {
       form.append("model", model);
       form.append("prompt", stylePrompt);
       form.append("size", "1024x1024");
-      form.append("quality", "low");
       form.append("response_format", "b64_json");
-      form.append("output_format", "png");
       form.append(fieldName, new Blob([imageBuffer], { type: "image/png" }), "canvas.png");
 
       const response = await fetch("https://api.openai.com/v1/images/edits", {
