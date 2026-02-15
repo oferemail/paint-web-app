@@ -30,8 +30,6 @@ const RESEND_API_KEY = env("RESEND_API_KEY");
 const RESEND_FROM = env("RESEND_FROM", "Paint App <onboarding@resend.dev>");
 const GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID");
 const GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET");
-const FACEBOOK_APP_ID = env("FACEBOOK_APP_ID");
-const FACEBOOK_APP_SECRET = env("FACEBOOK_APP_SECRET");
 
 const staticFiles = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
@@ -458,27 +456,12 @@ function getOauthProviderConfig(provider, req) {
     };
   }
 
-  if (provider === "facebook") {
-    if (!FACEBOOK_APP_ID || !FACEBOOK_APP_SECRET) return null;
-    return {
-      provider: "facebook",
-      clientId: FACEBOOK_APP_ID,
-      clientSecret: FACEBOOK_APP_SECRET,
-      callbackUrl: `${baseUrl}/api/oauth/facebook/callback`,
-      authUrl: "https://www.facebook.com/v19.0/dialog/oauth",
-      tokenUrl: "https://graph.facebook.com/v19.0/oauth/access_token",
-      userInfoUrl: "https://graph.facebook.com/me",
-      scopes: ["email", "public_profile"],
-    };
-  }
-
   return null;
 }
 
 function getEnabledOauthProviders(req) {
   return {
     google: Boolean(getOauthProviderConfig("google", req)),
-    facebook: Boolean(getOauthProviderConfig("facebook", req)),
   };
 }
 
@@ -531,28 +514,6 @@ async function exchangeGoogleCodeForProfile(config, code, codeVerifier) {
   const profile = await profileResponse.json();
   return {
     subject: String(profile.sub || ""),
-    email: String(profile.email || "").toLowerCase(),
-  };
-}
-
-async function exchangeFacebookCodeForProfile(config, code) {
-  const tokenUrl = new URL(config.tokenUrl);
-  tokenUrl.searchParams.set("client_id", config.clientId);
-  tokenUrl.searchParams.set("client_secret", config.clientSecret);
-  tokenUrl.searchParams.set("redirect_uri", config.callbackUrl);
-  tokenUrl.searchParams.set("code", code);
-  const tokenResponse = await fetch(tokenUrl);
-  if (!tokenResponse.ok) throw new Error("oauth_token_error");
-  const tokenData = await tokenResponse.json();
-
-  const profileUrl = new URL(config.userInfoUrl);
-  profileUrl.searchParams.set("fields", "id,email");
-  profileUrl.searchParams.set("access_token", tokenData.access_token);
-  const profileResponse = await fetch(profileUrl);
-  if (!profileResponse.ok) throw new Error("oauth_profile_error");
-  const profile = await profileResponse.json();
-  return {
-    subject: String(profile.id || ""),
     email: String(profile.email || "").toLowerCase(),
   };
 }
@@ -710,8 +671,8 @@ async function handleRequest(req, res) {
       return;
     }
 
-    if (method === "GET" && url.match(/^\/api\/oauth\/(google|facebook)\/start$/)) {
-      const provider = url.split("/")[3];
+    if (method === "GET" && url === "/api/oauth/google/start") {
+      const provider = "google";
       const config = getOauthProviderConfig(provider, req);
       if (!config) {
         sendJSON(res, 404, { error: "OAuth provider not configured." });
@@ -719,7 +680,7 @@ async function handleRequest(req, res) {
       }
 
       const db = getPool();
-      const codeVerifier = provider === "google" ? createCodeVerifier() : null;
+      const codeVerifier = createCodeVerifier();
       const state = await createOauthStateRecord(db, provider, codeVerifier);
 
       const authUrl = new URL(config.authUrl);
@@ -729,23 +690,17 @@ async function handleRequest(req, res) {
       authUrl.searchParams.set("scope", config.scopes.join(" "));
       authUrl.searchParams.set("state", state);
 
-      if (provider === "google") {
-        authUrl.searchParams.set("code_challenge", createCodeChallenge(codeVerifier));
-        authUrl.searchParams.set("code_challenge_method", "S256");
-        authUrl.searchParams.set("access_type", "online");
-        authUrl.searchParams.set("prompt", "select_account");
-      }
-
-      if (provider === "facebook") {
-        authUrl.searchParams.set("auth_type", "rerequest");
-      }
+      authUrl.searchParams.set("code_challenge", createCodeChallenge(codeVerifier));
+      authUrl.searchParams.set("code_challenge_method", "S256");
+      authUrl.searchParams.set("access_type", "online");
+      authUrl.searchParams.set("prompt", "select_account");
 
       sendRedirect(res, authUrl.toString());
       return;
     }
 
-    if (method === "GET" && url.match(/^\/api\/oauth\/(google|facebook)\/callback$/)) {
-      const provider = url.split("/")[3];
+    if (method === "GET" && url === "/api/oauth/google/callback") {
+      const provider = "google";
       const config = getOauthProviderConfig(provider, req);
       if (!config) {
         sendRedirect(res, "/?oauth_error=provider_not_configured");
@@ -772,12 +727,7 @@ async function handleRequest(req, res) {
         return;
       }
 
-      let oauthProfile;
-      if (provider === "google") {
-        oauthProfile = await exchangeGoogleCodeForProfile(config, code, stateRecord.code_verifier);
-      } else {
-        oauthProfile = await exchangeFacebookCodeForProfile(config, code);
-      }
+      const oauthProfile = await exchangeGoogleCodeForProfile(config, code, stateRecord.code_verifier);
 
       if (!oauthProfile.subject) {
         sendRedirect(res, "/?oauth_error=invalid_profile");

@@ -2,7 +2,7 @@
 
 A multi-user browser paint app with:
 - Email/password sign up and sign in
-- Social sign-in with Google/Facebook OAuth
+- Social sign-in with Google OAuth
 - Sign out
 - Save and load each user's latest painting
 - Export PNG download
@@ -41,16 +41,13 @@ Preferred (no SMTP needed): Resend API
 
 ## Social OAuth (Free)
 
-Google and Facebook OAuth are free to set up (provider app registration required).
+Google OAuth is free to set up (provider app registration required).
 Add these environment variables:
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
-- `FACEBOOK_APP_ID`
-- `FACEBOOK_APP_SECRET`
 
-Both providers must allow callback URLs:
+Google OAuth callback URL:
 - `https://paint-web-app-taupe.vercel.app/api/oauth/google/callback`
-- `https://paint-web-app-taupe.vercel.app/api/oauth/facebook/callback`
 
 ## Run locally
 

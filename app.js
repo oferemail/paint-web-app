@@ -12,7 +12,6 @@ const authPassword = document.getElementById("auth-password");
 const forgotPasswordBtn = document.getElementById("forgot-password");
 const socialAuth = document.getElementById("social-auth");
 const googleLoginBtn = document.getElementById("google-login");
-const facebookLoginBtn = document.getElementById("facebook-login");
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -93,14 +92,13 @@ function setAuthMode(mode) {
 async function initSocialProviders() {
   try {
     const providers = await api("/api/oauth/providers");
-    if (!providers.google && !providers.facebook) {
+    if (!providers.google) {
       socialAuth.classList.add("hidden");
       return;
     }
 
     socialAuth.classList.remove("hidden");
     googleLoginBtn.classList.toggle("hidden", !providers.google);
-    facebookLoginBtn.classList.toggle("hidden", !providers.facebook);
   } catch {
     socialAuth.classList.add("hidden");
   }
@@ -230,10 +228,6 @@ authToggle.addEventListener("click", () => {
 
 googleLoginBtn.addEventListener("click", () => {
   window.location.href = "/api/oauth/google/start";
-});
-
-facebookLoginBtn.addEventListener("click", () => {
-  window.location.href = "/api/oauth/facebook/start";
 });
 
 forgotPasswordBtn.addEventListener("click", async () => {
