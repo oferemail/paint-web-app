@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Paint Web App</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <h1>Paint</h1>
+    <section class="toolbar" aria-label="Paint controls">
+      <label>
+        Color
+        <input id="color" type="color" value="#111111" />
+      </label>
+      <label>
+        Size
+        <input id="size" type="range" min="1" max="50" value="6" />
+      </label>
+      <button id="clear" type="button">Clear</button>
+      <button id="save" type="button">Save PNG</button>
+    </section>
+    <canvas id="canvas" width="900" height="520" aria-label="Drawing canvas"></canvas>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
