@@ -31,7 +31,7 @@ const RESEND_FROM = env("RESEND_FROM", "Paint App <onboarding@resend.dev>");
 const GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID");
 const GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET");
 const OPENAI_API_KEY = env("OPENAI_API_KEY");
-const OPENAI_IMAGE_MODEL = env("OPENAI_IMAGE_MODEL", "gpt-image-1");
+const OPENAI_IMAGE_MODEL = env("OPENAI_IMAGE_MODEL", "dall-e-2");
 const MAGIC_WINDOW_MS = 15 * 60 * 1000;
 const MAGIC_MAX_ATTEMPTS = 10;
 const MAGIC_STYLES = {
@@ -679,6 +679,7 @@ async function generateMagicImage(imageData, styleKey) {
 
   const candidateModels = [
     OPENAI_IMAGE_MODEL,
+    "dall-e-2",
     "gpt-image-1",
     "gpt-image-1-mini",
   ].filter((value, index, all) => value && all.indexOf(value) === index);
