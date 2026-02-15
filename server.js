@@ -2,12 +2,16 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { Pool } = require("pg");
 
 const PORT = process.env.PORT || 3000;
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
-const DB_PATH = path.join(__dirname, "db.json");
-
-const sessions = new Map();
+const DATABASE_URL =
+  process.env.POSTGRES_URL ||
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_PRISMA_URL ||
+  process.env.POSTGRES_URL_NON_POOLING ||
+  "";
 
 const staticFiles = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
@@ -16,25 +20,69 @@ const staticFiles = {
   "/app.js": { file: "app.js", type: "application/javascript; charset=utf-8" },
 };
 
-function loadDB() {
-  if (!fs.existsSync(DB_PATH)) {
-    return { users: {} };
-  }
+let pool = null;
+let schemaReadyPromise = null;
 
-  try {
-    const raw = fs.readFileSync(DB_PATH, "utf8");
-    const parsed = JSON.parse(raw);
-    if (!parsed.users || typeof parsed.users !== "object") {
-      return { users: {} };
-    }
-    return parsed;
-  } catch {
-    return { users: {} };
-  }
+function hasDatabaseConfig() {
+  return Boolean(DATABASE_URL);
 }
 
-function saveDB(db) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
+function getPool() {
+  if (!hasDatabaseConfig()) {
+    return null;
+  }
+
+  if (!pool) {
+    const shouldUseSSL = !DATABASE_URL.includes("localhost") && process.env.PGSSLMODE !== "disable";
+    pool = new Pool({
+      connectionString: DATABASE_URL,
+      ssl: shouldUseSSL ? { rejectUnauthorized: false } : false,
+      max: 10,
+    });
+  }
+
+  return pool;
+}
+
+async function ensureSchema() {
+  if (!hasDatabaseConfig()) {
+    return;
+  }
+
+  if (!schemaReadyPromise) {
+    schemaReadyPromise = (async () => {
+      const db = getPool();
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id BIGSERIAL PRIMARY KEY,
+          email TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          painting TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CONSTRAINT email_lowercase CHECK (email = LOWER(email))
+        );
+      `);
+
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          sid TEXT PRIMARY KEY,
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          expires_at TIMESTAMPTZ NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_sessions_expires_at
+        ON sessions (expires_at);
+      `);
+    })().catch((error) => {
+      schemaReadyPromise = null;
+      throw error;
+    });
+  }
+
+  await schemaReadyPromise;
 }
 
 function sendJSON(res, statusCode, payload, headers = {}) {
@@ -104,32 +152,69 @@ function verifyPassword(password, passwordHash) {
   return crypto.timingSafeEqual(a, b);
 }
 
-function getAuthenticatedEmail(req) {
-  const sid = parseCookies(req).sid;
-  if (!sid) return null;
-
-  const session = sessions.get(sid);
-  if (!session) return null;
-
-  if (Date.now() > session.expiresAt) {
-    sessions.delete(sid);
-    return null;
-  }
-
-  return session.email;
+function createSessionId() {
+  return crypto.randomBytes(32).toString("hex");
 }
 
-function createSession(email) {
-  const sid = crypto.randomBytes(24).toString("hex");
-  sessions.set(sid, { email, expiresAt: Date.now() + SESSION_TTL_MS });
+function buildSessionCookie(req, sid, maxAgeSeconds) {
+  const isSecure =
+    req.headers["x-forwarded-proto"] === "https" ||
+    process.env.NODE_ENV === "production";
+  return `sid=${sid}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAgeSeconds}${isSecure ? "; Secure" : ""}`;
+}
+
+function buildExpiredSessionCookie(req) {
+  const isSecure =
+    req.headers["x-forwarded-proto"] === "https" ||
+    process.env.NODE_ENV === "production";
+  return `sid=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${isSecure ? "; Secure" : ""}`;
+}
+
+async function createSession(db, userId) {
+  const sid = createSessionId();
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  await db.query(
+    "INSERT INTO sessions (sid, user_id, expires_at) VALUES ($1, $2, $3)",
+    [sid, userId, expiresAt]
+  );
   return sid;
 }
 
-function clearSession(req) {
+async function getAuthenticatedUser(req) {
   const sid = parseCookies(req).sid;
-  if (sid) {
-    sessions.delete(sid);
+  if (!sid) return null;
+
+  const db = getPool();
+  if (!db) return null;
+
+  await db.query("DELETE FROM sessions WHERE expires_at <= NOW()");
+
+  const result = await db.query(
+    `
+      SELECT u.id, u.email
+      FROM sessions s
+      JOIN users u ON u.id = s.user_id
+      WHERE s.sid = $1 AND s.expires_at > NOW()
+      LIMIT 1
+    `,
+    [sid]
+  );
+
+  if (!result.rows[0]) {
+    return null;
   }
+
+  return result.rows[0];
+}
+
+async function clearSession(req) {
+  const sid = parseCookies(req).sid;
+  if (!sid) return;
+
+  const db = getPool();
+  if (!db) return;
+
+  await db.query("DELETE FROM sessions WHERE sid = $1", [sid]);
 }
 
 function isEmail(value) {
@@ -138,6 +223,25 @@ function isEmail(value) {
 
 function isValidPassword(value) {
   return typeof value === "string" && value.length >= 8;
+}
+
+function hasValidPngDataUrl(value) {
+  return (
+    typeof value === "string" &&
+    value.startsWith("data:image/png;base64,") &&
+    value.length <= 5 * 1024 * 1024
+  );
+}
+
+function ensureDatabaseOrFail(res) {
+  if (hasDatabaseConfig()) {
+    return true;
+  }
+
+  sendJSON(res, 500, {
+    error: "Database is not configured. Set POSTGRES_URL (or DATABASE_URL).",
+  });
+  return false;
 }
 
 async function handleRequest(req, res) {
@@ -158,6 +262,14 @@ async function handleRequest(req, res) {
       return;
     }
 
+    if (url.startsWith("/api/")) {
+      if (!ensureDatabaseOrFail(res)) {
+        return;
+      }
+
+      await ensureSchema();
+    }
+
     if (method === "POST" && url === "/api/signup") {
       const { email, password } = await parseJSONBody(req);
       if (!isEmail(email)) {
@@ -170,25 +282,27 @@ async function handleRequest(req, res) {
       }
 
       const normalizedEmail = email.toLowerCase();
-      const db = loadDB();
-      if (db.users[normalizedEmail]) {
+      const db = getPool();
+
+      const existing = await db.query("SELECT id FROM users WHERE email = $1 LIMIT 1", [normalizedEmail]);
+      if (existing.rows[0]) {
         sendJSON(res, 409, { error: "Account already exists." });
         return;
       }
 
-      db.users[normalizedEmail] = {
-        passwordHash: hashPassword(password),
-        painting: null,
-      };
-      saveDB(db);
+      const userInsert = await db.query(
+        "INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email",
+        [normalizedEmail, hashPassword(password)]
+      );
 
-      const sid = createSession(normalizedEmail);
+      const user = userInsert.rows[0];
+      const sid = await createSession(db, user.id);
       sendJSON(
         res,
         201,
-        { ok: true, email: normalizedEmail },
+        { ok: true, email: user.email },
         {
-          "Set-Cookie": `sid=${sid}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`,
+          "Set-Cookie": buildSessionCookie(req, sid, SESSION_TTL_MS / 1000),
         }
       );
       return;
@@ -197,95 +311,90 @@ async function handleRequest(req, res) {
     if (method === "POST" && url === "/api/login") {
       const { email, password } = await parseJSONBody(req);
       const normalizedEmail = String(email || "").toLowerCase();
-      const db = loadDB();
-      const user = db.users[normalizedEmail];
+      const db = getPool();
 
-      if (!user || !verifyPassword(String(password || ""), user.passwordHash)) {
+      const result = await db.query(
+        "SELECT id, email, password_hash FROM users WHERE email = $1 LIMIT 1",
+        [normalizedEmail]
+      );
+      const user = result.rows[0];
+
+      if (!user || !verifyPassword(String(password || ""), user.password_hash)) {
         sendJSON(res, 401, { error: "Invalid credentials." });
         return;
       }
 
-      const sid = createSession(normalizedEmail);
+      const sid = await createSession(db, user.id);
       sendJSON(
         res,
         200,
-        { ok: true, email: normalizedEmail },
+        { ok: true, email: user.email },
         {
-          "Set-Cookie": `sid=${sid}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`,
+          "Set-Cookie": buildSessionCookie(req, sid, SESSION_TTL_MS / 1000),
         }
       );
       return;
     }
 
     if (method === "POST" && url === "/api/logout") {
-      clearSession(req);
+      await clearSession(req);
       sendJSON(
         res,
         200,
         { ok: true },
         {
-          "Set-Cookie": "sid=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0",
+          "Set-Cookie": buildExpiredSessionCookie(req),
         }
       );
       return;
     }
 
     if (method === "GET" && url === "/api/me") {
-      const email = getAuthenticatedEmail(req);
-      if (!email) {
+      const user = await getAuthenticatedUser(req);
+      if (!user) {
         sendJSON(res, 401, { error: "Not authenticated." });
         return;
       }
 
-      sendJSON(res, 200, { email });
+      sendJSON(res, 200, { email: user.email });
       return;
     }
 
     if (method === "GET" && url === "/api/painting") {
-      const email = getAuthenticatedEmail(req);
-      if (!email) {
+      const user = await getAuthenticatedUser(req);
+      if (!user) {
         sendJSON(res, 401, { error: "Not authenticated." });
         return;
       }
 
-      const db = loadDB();
-      const user = db.users[email];
-      sendJSON(res, 200, { imageData: user?.painting || null });
+      const db = getPool();
+      const result = await db.query("SELECT painting FROM users WHERE id = $1 LIMIT 1", [user.id]);
+      sendJSON(res, 200, { imageData: result.rows[0]?.painting || null });
       return;
     }
 
     if (method === "POST" && url === "/api/painting") {
-      const email = getAuthenticatedEmail(req);
-      if (!email) {
+      const user = await getAuthenticatedUser(req);
+      if (!user) {
         sendJSON(res, 401, { error: "Not authenticated." });
         return;
       }
 
       const { imageData } = await parseJSONBody(req);
-      if (
-        typeof imageData !== "string" ||
-        !imageData.startsWith("data:image/png;base64,") ||
-        imageData.length > 5 * 1024 * 1024
-      ) {
+      if (!hasValidPngDataUrl(imageData)) {
         sendJSON(res, 400, { error: "Invalid image payload." });
         return;
       }
 
-      const db = loadDB();
-      if (!db.users[email]) {
-        sendJSON(res, 404, { error: "User not found." });
-        return;
-      }
-
-      db.users[email].painting = imageData;
-      saveDB(db);
+      const db = getPool();
+      await db.query("UPDATE users SET painting = $1 WHERE id = $2", [imageData, user.id]);
       sendJSON(res, 200, { ok: true });
       return;
     }
 
     sendText(res, 404, "Not found");
   } catch (error) {
-    sendJSON(res, 500, { error: error.message || "Server error" });
+    sendJSON(res, 500, { error: "Server error." });
   }
 }
 
