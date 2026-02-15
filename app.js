@@ -174,6 +174,17 @@ function buildMagicInputImageData() {
   return magicCanvas.toDataURL("image/png");
 }
 
+function buildMagicMaskData() {
+  const maskCanvas = document.createElement("canvas");
+  maskCanvas.width = 512;
+  maskCanvas.height = 512;
+  const maskCtx = maskCanvas.getContext("2d");
+
+  // Fully transparent mask means the whole image can be regenerated.
+  maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+  return maskCanvas.toDataURL("image/png");
+}
+
 function resetHistoryFromCanvas() {
   history = [currentCanvasData()];
   historyIndex = 0;
@@ -360,6 +371,7 @@ magicForm.addEventListener("submit", async (event) => {
       method: "POST",
       body: {
         imageData: buildMagicInputImageData(),
+        maskData: buildMagicMaskData(),
         style,
       },
     });

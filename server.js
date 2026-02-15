@@ -688,7 +688,7 @@ function createOpenAiHttpError(responseStatus, bodyText, requestId) {
   return error;
 }
 
-async function generateMagicImage(imageData, styleKey) {
+async function generateMagicImage(imageData, styleKey, maskData = "") {
   const stylePrompt = MAGIC_STYLES[styleKey];
   if (!stylePrompt) {
     throw new Error("invalid_style");
@@ -702,6 +702,7 @@ async function generateMagicImage(imageData, styleKey) {
   if (!imageBuffer) {
     throw new Error("invalid_image");
   }
+  const maskBuffer = parsePngDataUrl(maskData);
 
   const editsModel = "dall-e-2";
 
@@ -712,6 +713,9 @@ async function generateMagicImage(imageData, styleKey) {
   form.append("size", "512x512");
   form.append("n", "1");
   form.append("image", new Blob([imageBuffer], { type: "image/png" }), "canvas.png");
+  if (maskBuffer) {
+    form.append("mask", new Blob([maskBuffer], { type: "image/png" }), "mask.png");
+  }
 
   const response = await fetch("https://api.openai.com/v1/images/edits", {
     method: "POST",
@@ -1166,9 +1170,13 @@ async function handleRequest(req, res) {
         return;
       }
 
-      const { imageData, style } = await parseJSONBody(req);
+      const { imageData, maskData, style } = await parseJSONBody(req);
       if (!hasValidPngDataUrl(imageData)) {
         sendJSON(res, 400, { error: "Invalid image payload." });
+        return;
+      }
+      if (maskData && !hasValidPngDataUrl(maskData)) {
+        sendJSON(res, 400, { error: "Invalid mask payload." });
         return;
       }
 
@@ -1180,7 +1188,11 @@ async function handleRequest(req, res) {
       recordMagicAttempt(clientIp);
 
       try {
-        const generatedImageData = await generateMagicImage(imageData, String(style));
+        const generatedImageData = await generateMagicImage(
+          imageData,
+          String(style),
+          String(maskData || "")
+        );
         sendJSON(res, 200, { imageData: generatedImageData });
       } catch (error) {
         console.error("magic transform failure", error);
