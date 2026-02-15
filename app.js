@@ -203,8 +203,18 @@ async function drawSnapshot(dataUrl) {
   await new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => {
+      // Preserve image aspect ratio to avoid stretch artifacts.
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const scale = Math.max(canvas.width / image.width, canvas.height / image.height);
+      const drawWidth = image.width * scale;
+      const drawHeight = image.height * scale;
+      const offsetX = (canvas.width - drawWidth) / 2;
+      const offsetY = (canvas.height - drawHeight) / 2;
+
+      ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
       resolve();
     };
     image.onerror = () => reject(new Error("Unable to render generated image in browser."));
