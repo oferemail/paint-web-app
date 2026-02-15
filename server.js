@@ -4,6 +4,10 @@ const path = require("path");
 const crypto = require("crypto");
 const { Pool } = require("pg");
 
+function env(name, fallback = "") {
+  return String(process.env[name] ?? fallback).trim();
+}
+
 const PORT = process.env.PORT || 3000;
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
@@ -16,18 +20,18 @@ const PASSWORD_RESET_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_GENERIC_ERROR = "Invalid email or password.";
 const FORGOT_GENERIC_MESSAGE = "If an account exists for that email, a reset link has been sent.";
 const DATABASE_URL =
-  process.env.POSTGRES_URL ||
-  process.env.DATABASE_URL ||
-  process.env.POSTGRES_PRISMA_URL ||
-  process.env.POSTGRES_URL_NON_POOLING ||
+  env("POSTGRES_URL") ||
+  env("DATABASE_URL") ||
+  env("POSTGRES_PRISMA_URL") ||
+  env("POSTGRES_URL_NON_POOLING") ||
   "";
-const APP_BASE_URL = process.env.APP_BASE_URL || "";
-const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
-const RESEND_FROM = process.env.RESEND_FROM || "Paint App <onboarding@resend.dev>";
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
-const FACEBOOK_APP_ID = process.env.FACEBOOK_APP_ID || "";
-const FACEBOOK_APP_SECRET = process.env.FACEBOOK_APP_SECRET || "";
+const APP_BASE_URL = env("APP_BASE_URL");
+const RESEND_API_KEY = env("RESEND_API_KEY");
+const RESEND_FROM = env("RESEND_FROM", "Paint App <onboarding@resend.dev>");
+const GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID");
+const GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET");
+const FACEBOOK_APP_ID = env("FACEBOOK_APP_ID");
+const FACEBOOK_APP_SECRET = env("FACEBOOK_APP_SECRET");
 
 const staticFiles = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
