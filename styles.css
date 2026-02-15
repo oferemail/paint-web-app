@@ -410,6 +410,26 @@ canvas {
   font-size: 0.92rem;
 }
 
+.magic-progress {
+  margin: 0;
+  color: #27496d;
+  font-size: 0.9rem;
+}
+
+.magic-preview {
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.magic-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 .style-option {
   display: grid;
   grid-template-columns: auto 1fr;

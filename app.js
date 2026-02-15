@@ -27,6 +27,9 @@ const magicForm = document.getElementById("magic-form");
 const magicCancelBtn = document.getElementById("magic-cancel");
 const magicRunBtn = document.getElementById("magic-run");
 const magicErrorEl = document.getElementById("magic-error");
+const magicProgressEl = document.getElementById("magic-progress");
+const magicPreviewWrap = document.getElementById("magic-preview-wrap");
+const magicPreview = document.getElementById("magic-preview");
 
 let drawing = false;
 let lastX = 0;
@@ -202,7 +205,7 @@ async function drawSnapshot(dataUrl) {
       ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
       resolve();
     };
-    image.onerror = reject;
+    image.onerror = () => reject(new Error("Unable to render generated image in browser."));
     image.src = dataUrl;
   });
 }
@@ -284,8 +287,13 @@ saveCloudBtn.addEventListener("click", async () => {
 });
 
 function openMagicModal() {
+  magicCancelBtn.textContent = "Cancel";
   magicErrorEl.textContent = "";
   magicErrorEl.classList.add("hidden");
+  magicProgressEl.textContent = "";
+  magicProgressEl.classList.add("hidden");
+  magicPreview.removeAttribute("src");
+  magicPreviewWrap.classList.add("hidden");
   magicModal.classList.remove("hidden");
 }
 
@@ -319,6 +327,8 @@ magicForm.addEventListener("submit", async (event) => {
   magicCancelBtn.disabled = true;
   magicErrorEl.textContent = "";
   magicErrorEl.classList.add("hidden");
+  magicProgressEl.textContent = "Sending sketch to AI...";
+  magicProgressEl.classList.remove("hidden");
   setStatus("Generating magic image...");
 
   try {
@@ -329,9 +339,18 @@ magicForm.addEventListener("submit", async (event) => {
         style,
       },
     });
+    if (!result?.imageData || typeof result.imageData !== "string") {
+      throw new Error("Magic API returned an invalid image payload.");
+    }
+
+    magicPreview.src = result.imageData;
+    magicPreviewWrap.classList.remove("hidden");
+    magicProgressEl.textContent = "Image generated. Applying to canvas...";
+
     await drawSnapshot(result.imageData);
     pushHistoryState();
-    closeMagicModal();
+    magicProgressEl.textContent = "Done. Applied to canvas.";
+    magicCancelBtn.textContent = "Close";
     setStatus("Magic transform complete. Save Painting to store it.");
   } catch (error) {
     magicErrorEl.textContent = error.message || "Magic generation failed.";
