@@ -24,6 +24,10 @@ const DATABASE_URL =
 const APP_BASE_URL = process.env.APP_BASE_URL || "";
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 const RESEND_FROM = process.env.RESEND_FROM || "Paint App <onboarding@resend.dev>";
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+const FACEBOOK_APP_ID = process.env.FACEBOOK_APP_ID || "";
+const FACEBOOK_APP_SECRET = process.env.FACEBOOK_APP_SECRET || "";
 
 const staticFiles = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
@@ -104,6 +108,28 @@ async function ensureSchema() {
       `);
 
       await db.query(`
+        CREATE TABLE IF NOT EXISTS oauth_accounts (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          provider TEXT NOT NULL,
+          provider_subject TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (provider, provider_subject)
+        );
+      `);
+
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS oauth_states (
+          id BIGSERIAL PRIMARY KEY,
+          state_hash TEXT UNIQUE NOT NULL,
+          provider TEXT NOT NULL,
+          code_verifier TEXT,
+          expires_at TIMESTAMPTZ NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      await db.query(`
         CREATE INDEX IF NOT EXISTS idx_sessions_expires_at
         ON sessions (expires_at);
       `);
@@ -111,6 +137,11 @@ async function ensureSchema() {
       await db.query(`
         CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user
         ON password_reset_tokens (user_id, expires_at);
+      `);
+
+      await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_oauth_states_expires_at
+        ON oauth_states (expires_at);
       `);
     })().catch((error) => {
       schemaReadyPromise = null;
@@ -146,6 +177,20 @@ function sendText(res, statusCode, text) {
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
   });
   res.end(text);
+}
+
+function sendRedirect(res, location, headers = {}) {
+  res.writeHead(302, {
+    Location: location,
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    ...headers,
+  });
+  res.end();
 }
 
 function sleep(ms) {
@@ -216,6 +261,22 @@ function createSessionId() {
 
 function createResetToken() {
   return crypto.randomBytes(32).toString("hex");
+}
+
+function createOauthState() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function hashState(state) {
+  return crypto.createHash("sha256").update(state).digest("hex");
+}
+
+function createCodeVerifier() {
+  return crypto.randomBytes(48).toString("base64url");
+}
+
+function createCodeChallenge(codeVerifier) {
+  return crypto.createHash("sha256").update(codeVerifier).digest("base64url");
 }
 
 function buildSessionCookie(req, sid, maxAgeSeconds) {
@@ -343,7 +404,7 @@ function clearAuthFailures(ip) {
   authAttempts.delete(ip);
 }
 
-function isForgotRateLimited(ip, email) {
+function isForgotRateLimited(ip) {
   return isRateLimitedWithMap(resetAttempts, `ip:${ip}`, PASSWORD_RESET_WINDOW_MS, PASSWORD_RESET_IP_MAX_ATTEMPTS);
 }
 
@@ -374,6 +435,162 @@ function getBaseUrl(req) {
 
   const protocol = req.headers["x-forwarded-proto"] || "http";
   return `${protocol}://${req.headers.host}`;
+}
+
+function getOauthProviderConfig(provider, req) {
+  const baseUrl = getBaseUrl(req);
+
+  if (provider === "google") {
+    if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) return null;
+    return {
+      provider: "google",
+      clientId: GOOGLE_CLIENT_ID,
+      clientSecret: GOOGLE_CLIENT_SECRET,
+      callbackUrl: `${baseUrl}/api/oauth/google/callback`,
+      authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+      userInfoUrl: "https://openidconnect.googleapis.com/v1/userinfo",
+      scopes: ["openid", "email", "profile"],
+    };
+  }
+
+  if (provider === "facebook") {
+    if (!FACEBOOK_APP_ID || !FACEBOOK_APP_SECRET) return null;
+    return {
+      provider: "facebook",
+      clientId: FACEBOOK_APP_ID,
+      clientSecret: FACEBOOK_APP_SECRET,
+      callbackUrl: `${baseUrl}/api/oauth/facebook/callback`,
+      authUrl: "https://www.facebook.com/v19.0/dialog/oauth",
+      tokenUrl: "https://graph.facebook.com/v19.0/oauth/access_token",
+      userInfoUrl: "https://graph.facebook.com/me",
+      scopes: ["email", "public_profile"],
+    };
+  }
+
+  return null;
+}
+
+function getEnabledOauthProviders(req) {
+  return {
+    google: Boolean(getOauthProviderConfig("google", req)),
+    facebook: Boolean(getOauthProviderConfig("facebook", req)),
+  };
+}
+
+async function createOauthStateRecord(db, provider, codeVerifier = null) {
+  const state = createOauthState();
+  const stateHash = hashState(state);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  await db.query(
+    "INSERT INTO oauth_states (state_hash, provider, code_verifier, expires_at) VALUES ($1, $2, $3, $4)",
+    [stateHash, provider, codeVerifier, expiresAt]
+  );
+  return state;
+}
+
+async function consumeOauthStateRecord(db, provider, state) {
+  const stateHash = hashState(state);
+  const result = await db.query(
+    `
+      DELETE FROM oauth_states
+      WHERE state_hash = $1
+        AND provider = $2
+        AND expires_at > NOW()
+      RETURNING provider, code_verifier
+    `,
+    [stateHash, provider]
+  );
+  return result.rows[0] || null;
+}
+
+async function exchangeGoogleCodeForProfile(config, code, codeVerifier) {
+  const tokenResponse = await fetch(config.tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      redirect_uri: config.callbackUrl,
+      grant_type: "authorization_code",
+      code_verifier: codeVerifier || "",
+    }),
+  });
+  if (!tokenResponse.ok) throw new Error("oauth_token_error");
+  const tokenData = await tokenResponse.json();
+
+  const profileResponse = await fetch(config.userInfoUrl, {
+    headers: { Authorization: `Bearer ${tokenData.access_token}` },
+  });
+  if (!profileResponse.ok) throw new Error("oauth_profile_error");
+  const profile = await profileResponse.json();
+  return {
+    subject: String(profile.sub || ""),
+    email: String(profile.email || "").toLowerCase(),
+  };
+}
+
+async function exchangeFacebookCodeForProfile(config, code) {
+  const tokenUrl = new URL(config.tokenUrl);
+  tokenUrl.searchParams.set("client_id", config.clientId);
+  tokenUrl.searchParams.set("client_secret", config.clientSecret);
+  tokenUrl.searchParams.set("redirect_uri", config.callbackUrl);
+  tokenUrl.searchParams.set("code", code);
+  const tokenResponse = await fetch(tokenUrl);
+  if (!tokenResponse.ok) throw new Error("oauth_token_error");
+  const tokenData = await tokenResponse.json();
+
+  const profileUrl = new URL(config.userInfoUrl);
+  profileUrl.searchParams.set("fields", "id,email");
+  profileUrl.searchParams.set("access_token", tokenData.access_token);
+  const profileResponse = await fetch(profileUrl);
+  if (!profileResponse.ok) throw new Error("oauth_profile_error");
+  const profile = await profileResponse.json();
+  return {
+    subject: String(profile.id || ""),
+    email: String(profile.email || "").toLowerCase(),
+  };
+}
+
+async function findOrCreateOauthUser(db, provider, subject, email) {
+  const byOauth = await db.query(
+    `
+      SELECT u.id, u.email
+      FROM oauth_accounts oa
+      JOIN users u ON u.id = oa.user_id
+      WHERE oa.provider = $1 AND oa.provider_subject = $2
+      LIMIT 1
+    `,
+    [provider, subject]
+  );
+  if (byOauth.rows[0]) return byOauth.rows[0];
+
+  let user = null;
+  if (isEmail(email)) {
+    const byEmail = await db.query("SELECT id, email FROM users WHERE email = $1 LIMIT 1", [email]);
+    user = byEmail.rows[0] || null;
+  }
+
+  if (!user) {
+    const fallbackEmail = isEmail(email) ? email : `${provider}-${subject}@oauth.local`;
+    const created = await db.query(
+      "INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email",
+      [fallbackEmail, hashPassword(createSessionId())]
+    );
+    user = created.rows[0];
+  }
+
+  await db.query(
+    `
+      INSERT INTO oauth_accounts (user_id, provider, provider_subject)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (provider, provider_subject) DO NOTHING
+    `,
+    [user.id, provider, subject]
+  );
+
+  return user;
 }
 
 function isAllowedRequestOrigin(req) {
@@ -449,7 +666,8 @@ async function sendPasswordResetEmail(email, resetLink) {
 async function handleRequest(req, res) {
   try {
     const rawUrl = req.url || "/";
-    const url = rawUrl.split("?")[0];
+    const requestUrl = new URL(rawUrl, getBaseUrl(req));
+    const url = requestUrl.pathname;
     const { method } = req;
 
     if (!enforceSameOriginForWrites(req, res)) {
@@ -481,6 +699,93 @@ async function handleRequest(req, res) {
       }
 
       await ensureSchema();
+    }
+
+    if (method === "GET" && url === "/api/oauth/providers") {
+      sendJSON(res, 200, getEnabledOauthProviders(req));
+      return;
+    }
+
+    if (method === "GET" && url.match(/^\/api\/oauth\/(google|facebook)\/start$/)) {
+      const provider = url.split("/")[3];
+      const config = getOauthProviderConfig(provider, req);
+      if (!config) {
+        sendJSON(res, 404, { error: "OAuth provider not configured." });
+        return;
+      }
+
+      const db = getPool();
+      const codeVerifier = provider === "google" ? createCodeVerifier() : null;
+      const state = await createOauthStateRecord(db, provider, codeVerifier);
+
+      const authUrl = new URL(config.authUrl);
+      authUrl.searchParams.set("client_id", config.clientId);
+      authUrl.searchParams.set("redirect_uri", config.callbackUrl);
+      authUrl.searchParams.set("response_type", "code");
+      authUrl.searchParams.set("scope", config.scopes.join(" "));
+      authUrl.searchParams.set("state", state);
+
+      if (provider === "google") {
+        authUrl.searchParams.set("code_challenge", createCodeChallenge(codeVerifier));
+        authUrl.searchParams.set("code_challenge_method", "S256");
+        authUrl.searchParams.set("access_type", "online");
+        authUrl.searchParams.set("prompt", "select_account");
+      }
+
+      if (provider === "facebook") {
+        authUrl.searchParams.set("auth_type", "rerequest");
+      }
+
+      sendRedirect(res, authUrl.toString());
+      return;
+    }
+
+    if (method === "GET" && url.match(/^\/api\/oauth\/(google|facebook)\/callback$/)) {
+      const provider = url.split("/")[3];
+      const config = getOauthProviderConfig(provider, req);
+      if (!config) {
+        sendRedirect(res, "/?oauth_error=provider_not_configured");
+        return;
+      }
+
+      const error = requestUrl.searchParams.get("error");
+      if (error) {
+        sendRedirect(res, "/?oauth_error=access_denied");
+        return;
+      }
+
+      const code = requestUrl.searchParams.get("code") || "";
+      const state = requestUrl.searchParams.get("state") || "";
+      if (!code || !state) {
+        sendRedirect(res, "/?oauth_error=invalid_callback");
+        return;
+      }
+
+      const db = getPool();
+      const stateRecord = await consumeOauthStateRecord(db, provider, state);
+      if (!stateRecord) {
+        sendRedirect(res, "/?oauth_error=invalid_state");
+        return;
+      }
+
+      let oauthProfile;
+      if (provider === "google") {
+        oauthProfile = await exchangeGoogleCodeForProfile(config, code, stateRecord.code_verifier);
+      } else {
+        oauthProfile = await exchangeFacebookCodeForProfile(config, code);
+      }
+
+      if (!oauthProfile.subject) {
+        sendRedirect(res, "/?oauth_error=invalid_profile");
+        return;
+      }
+
+      const user = await findOrCreateOauthUser(db, provider, oauthProfile.subject, oauthProfile.email);
+      const sid = await createSession(db, user.id);
+      sendRedirect(res, "/", {
+        "Set-Cookie": buildSessionCookie(req, sid, SESSION_TTL_MS / 1000),
+      });
+      return;
     }
 
     if (method === "POST" && url === "/api/signup") {
@@ -600,7 +905,7 @@ async function handleRequest(req, res) {
         return;
       }
 
-      if (isForgotRateLimited(clientIp, normalizedEmail)) {
+      if (isForgotRateLimited(clientIp)) {
         await applyAuthFailureDelay();
         sendJSON(res, 200, { ok: true, message: FORGOT_GENERIC_MESSAGE });
         return;

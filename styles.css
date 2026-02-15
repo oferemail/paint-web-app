@@ -150,6 +150,23 @@ button[type="submit"]:hover,
   text-decoration: underline;
 }
 
+.social-auth {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.social-btn {
+  width: 100%;
+  background: #fff;
+  border: 1px solid var(--border);
+  color: var(--ink);
+}
+
+.social-btn:hover {
+  background: #f7f9fc;
+}
+
 canvas {
   width: 100%;
   max-width: 100%;

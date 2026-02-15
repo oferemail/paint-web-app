@@ -10,6 +10,9 @@ const authToggle = document.getElementById("auth-toggle");
 const authEmail = document.getElementById("auth-email");
 const authPassword = document.getElementById("auth-password");
 const forgotPasswordBtn = document.getElementById("forgot-password");
+const socialAuth = document.getElementById("social-auth");
+const googleLoginBtn = document.getElementById("google-login");
+const facebookLoginBtn = document.getElementById("facebook-login");
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -84,6 +87,22 @@ function setAuthMode(mode) {
     authToggle.textContent = "Need an account? Sign up";
     authPassword.autocomplete = "current-password";
     forgotPasswordBtn.classList.remove("hidden");
+  }
+}
+
+async function initSocialProviders() {
+  try {
+    const providers = await api("/api/oauth/providers");
+    if (!providers.google && !providers.facebook) {
+      socialAuth.classList.add("hidden");
+      return;
+    }
+
+    socialAuth.classList.remove("hidden");
+    googleLoginBtn.classList.toggle("hidden", !providers.google);
+    facebookLoginBtn.classList.toggle("hidden", !providers.facebook);
+  } catch {
+    socialAuth.classList.add("hidden");
   }
 }
 
@@ -209,6 +228,14 @@ authToggle.addEventListener("click", () => {
   setStatus("");
 });
 
+googleLoginBtn.addEventListener("click", () => {
+  window.location.href = "/api/oauth/google/start";
+});
+
+facebookLoginBtn.addEventListener("click", () => {
+  window.location.href = "/api/oauth/facebook/start";
+});
+
 forgotPasswordBtn.addEventListener("click", async () => {
   const email = authEmail.value.trim();
   if (!email) {
@@ -262,6 +289,12 @@ authForm.addEventListener("submit", async (event) => {
 });
 
 (async function init() {
+  const oauthError = new URLSearchParams(window.location.search).get("oauth_error");
+  if (oauthError) {
+    setStatus("Social sign-in was not completed. Please try again.", true);
+    window.history.replaceState({}, "", "/");
+  }
+
   try {
     const me = await api("/api/me");
     await handleAuthSuccess(me.email);
@@ -269,5 +302,6 @@ authForm.addEventListener("submit", async (event) => {
     showAuth();
     setStatus("Sign in or create an account.");
     setAuthMode("signup");
+    initSocialProviders();
   }
 })();
