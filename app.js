@@ -210,6 +210,7 @@ authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const email = authEmail.value.trim();
   const password = authPassword.value;
+  const genericAuthError = "Unable to authenticate with those credentials.";
 
   if (!email || !password) return;
 
@@ -220,20 +221,11 @@ authForm.addEventListener("submit", async (event) => {
       authForm.reset();
       return;
     } catch (error) {
-      if (error.message === "Account already exists.") {
-        try {
-          await api("/api/login", { method: "POST", body: { email, password } });
-          await handleAuthSuccess(email);
-          authForm.reset();
-          setStatus("Account already exists. Signed in instead.");
-          return;
-        } catch {
-          setStatus("Account exists. Password is incorrect.", true);
-          setAuthMode("login");
-          return;
-        }
+      if (error.message.includes("Too many attempts")) {
+        setStatus(error.message, true);
+        return;
       }
-      setStatus(error.message, true);
+      setStatus(genericAuthError, true);
       return;
     }
   }
@@ -243,7 +235,11 @@ authForm.addEventListener("submit", async (event) => {
     await handleAuthSuccess(email);
     authForm.reset();
   } catch (error) {
-    setStatus(error.message, true);
+    if (error.message.includes("Too many attempts")) {
+      setStatus(error.message, true);
+      return;
+    }
+    setStatus(genericAuthError, true);
   }
 });
 

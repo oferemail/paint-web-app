@@ -6,6 +6,11 @@ const { Pool } = require("pg");
 
 const PORT = process.env.PORT || 3000;
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+const AUTH_WINDOW_MS = 15 * 60 * 1000;
+const AUTH_MAX_ATTEMPTS = 12;
+const AUTH_FAILURE_DELAY_MS = 250;
+const AUTH_FAILURE_JITTER_MS = 250;
+const AUTH_GENERIC_ERROR = "Invalid email or password.";
 const DATABASE_URL =
   process.env.POSTGRES_URL ||
   process.env.DATABASE_URL ||
@@ -22,6 +27,8 @@ const staticFiles = {
 
 let pool = null;
 let schemaReadyPromise = null;
+const authAttempts = new Map();
+const DUMMY_PASSWORD_HASH = hashPassword("dummy-password-value");
 
 function hasDatabaseConfig() {
   return Boolean(DATABASE_URL);
@@ -96,6 +103,10 @@ function sendJSON(res, statusCode, payload, headers = {}) {
 function sendText(res, statusCode, text) {
   res.writeHead(statusCode, { "Content-Type": "text/plain; charset=utf-8" });
   res.end(text);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parseJSONBody(req) {
@@ -233,6 +244,47 @@ function hasValidPngDataUrl(value) {
   );
 }
 
+function getClientIp(req) {
+  const forwardedFor = req.headers["x-forwarded-for"];
+  if (typeof forwardedFor === "string" && forwardedFor.length > 0) {
+    return forwardedFor.split(",")[0].trim();
+  }
+  return req.socket?.remoteAddress || "unknown";
+}
+
+function getAuthAttemptState(ip) {
+  const now = Date.now();
+  const current = authAttempts.get(ip);
+
+  if (!current || now - current.windowStart > AUTH_WINDOW_MS) {
+    const reset = { count: 0, windowStart: now };
+    authAttempts.set(ip, reset);
+    return reset;
+  }
+
+  return current;
+}
+
+function isRateLimited(ip) {
+  const state = getAuthAttemptState(ip);
+  return state.count >= AUTH_MAX_ATTEMPTS;
+}
+
+function recordAuthFailure(ip) {
+  const state = getAuthAttemptState(ip);
+  state.count += 1;
+  authAttempts.set(ip, state);
+}
+
+function clearAuthFailures(ip) {
+  authAttempts.delete(ip);
+}
+
+async function applyAuthFailureDelay() {
+  const jitter = Math.floor(Math.random() * AUTH_FAILURE_JITTER_MS);
+  await sleep(AUTH_FAILURE_DELAY_MS + jitter);
+}
+
 function ensureDatabaseOrFail(res) {
   if (hasDatabaseConfig()) {
     return true;
@@ -271,6 +323,12 @@ async function handleRequest(req, res) {
     }
 
     if (method === "POST" && url === "/api/signup") {
+      const clientIp = getClientIp(req);
+      if (isRateLimited(clientIp)) {
+        sendJSON(res, 429, { error: "Too many attempts. Please try again later." });
+        return;
+      }
+
       const { email, password } = await parseJSONBody(req);
       if (!isEmail(email)) {
         sendJSON(res, 400, { error: "Valid email is required." });
@@ -284,9 +342,31 @@ async function handleRequest(req, res) {
       const normalizedEmail = email.toLowerCase();
       const db = getPool();
 
-      const existing = await db.query("SELECT id FROM users WHERE email = $1 LIMIT 1", [normalizedEmail]);
-      if (existing.rows[0]) {
-        sendJSON(res, 409, { error: "Account already exists." });
+      const existing = await db.query(
+        "SELECT id, email, password_hash FROM users WHERE email = $1 LIMIT 1",
+        [normalizedEmail]
+      );
+      const existingUser = existing.rows[0];
+
+      // Signup with existing credentials behaves like sign-in without revealing account existence.
+      if (existingUser) {
+        if (!verifyPassword(password, existingUser.password_hash)) {
+          recordAuthFailure(clientIp);
+          await applyAuthFailureDelay();
+          sendJSON(res, 401, { error: AUTH_GENERIC_ERROR });
+          return;
+        }
+
+        const sid = await createSession(db, existingUser.id);
+        clearAuthFailures(clientIp);
+        sendJSON(
+          res,
+          200,
+          { ok: true, email: existingUser.email },
+          {
+            "Set-Cookie": buildSessionCookie(req, sid, SESSION_TTL_MS / 1000),
+          }
+        );
         return;
       }
 
@@ -297,6 +377,7 @@ async function handleRequest(req, res) {
 
       const user = userInsert.rows[0];
       const sid = await createSession(db, user.id);
+      clearAuthFailures(clientIp);
       sendJSON(
         res,
         201,
@@ -309,6 +390,12 @@ async function handleRequest(req, res) {
     }
 
     if (method === "POST" && url === "/api/login") {
+      const clientIp = getClientIp(req);
+      if (isRateLimited(clientIp)) {
+        sendJSON(res, 429, { error: "Too many attempts. Please try again later." });
+        return;
+      }
+
       const { email, password } = await parseJSONBody(req);
       const normalizedEmail = String(email || "").toLowerCase();
       const db = getPool();
@@ -320,11 +407,18 @@ async function handleRequest(req, res) {
       const user = result.rows[0];
 
       if (!user || !verifyPassword(String(password || ""), user.password_hash)) {
-        sendJSON(res, 401, { error: "Invalid credentials." });
+        // Burn comparable CPU for unknown users to reduce account-enumeration timing signals.
+        if (!user) {
+          verifyPassword(String(password || ""), DUMMY_PASSWORD_HASH);
+        }
+        recordAuthFailure(clientIp);
+        await applyAuthFailureDelay();
+        sendJSON(res, 401, { error: AUTH_GENERIC_ERROR });
         return;
       }
 
       const sid = await createSession(db, user.id);
+      clearAuthFailures(clientIp);
       sendJSON(
         res,
         200,

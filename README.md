@@ -12,6 +12,8 @@ A multi-user browser paint app with:
 - Sessions are stored server-side in PostgreSQL
 - Session cookie is `HttpOnly`, `SameSite=Lax`, and `Secure` on HTTPS
 - SQL uses parameterized queries (no string interpolation)
+- Auth failures use generic responses (no account-existence hints)
+- Auth endpoints include basic rate limiting and failure delay
 
 ## Database
 
