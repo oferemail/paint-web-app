@@ -35,11 +35,11 @@ const MAGIC_WINDOW_MS = 15 * 60 * 1000;
 const MAGIC_MAX_ATTEMPTS = 10;
 const MAGIC_STYLES = {
   photoreal:
-    "Convert this rough sketch into a fully photorealistic image. Use the sketch only as composition guidance. Replace all hand-drawn lines and flat colors with real-world objects, realistic materials, natural lighting, shadows, and rich detail. Do not keep any sketch texture or doodle style.",
+    "Convert this drawing into a realistic photo while staying faithful to the original scene. Preserve the same composition, object positions, proportions, camera angle, and overall color intent. Replace sketch strokes with real materials, natural lighting, and subtle shadows. Do not add unrelated objects or change the core layout.",
   cinematic:
-    "Reimagine this sketch as a realistic cinematic frame. Treat the drawing as loose blocking only. Produce a high-production movie still with dramatic lighting, atmospheric depth, realistic textures, and no visible sketch lines.",
+    "Render this exact scene as a realistic cinematic still. Keep the original composition and subjects intact, with only moderate cinematic grading, controlled contrast, and soft atmospheric depth. Maintain object placement and scene structure from the drawing. Do not introduce major new elements.",
   fantasy:
-    "Turn this sketch into realistic fantasy world imagery. Keep only the core composition idea, then generate believable environments, materials, and lighting with photoreal detail. Remove all sketch-like strokes and flat painted look.",
+    "Transform this drawing into grounded fantasy realism while preserving the same composition and subject arrangement. Keep shapes, spacing, and perspective close to the original sketch, but upgrade textures, lighting, and environment detail with a subtle fantasy mood. Avoid large scene changes or extra subjects.",
 };
 
 const staticFiles = {
