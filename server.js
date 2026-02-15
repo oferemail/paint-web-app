@@ -31,7 +31,6 @@ const RESEND_FROM = env("RESEND_FROM", "Paint App <onboarding@resend.dev>");
 const GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID");
 const GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET");
 const OPENAI_API_KEY = env("OPENAI_API_KEY");
-const OPENAI_IMAGE_MODEL = env("OPENAI_IMAGE_MODEL", "dall-e-2");
 const MAGIC_WINDOW_MS = 15 * 60 * 1000;
 const MAGIC_MAX_ATTEMPTS = 10;
 const MAGIC_STYLES = {
@@ -662,6 +661,33 @@ function parsePngDataUrl(dataUrl) {
   }
 }
 
+function createOpenAiHttpError(responseStatus, bodyText, requestId) {
+  let providerMessage = "";
+  let providerCode = "";
+  let providerParam = "";
+
+  try {
+    const parsed = JSON.parse(bodyText);
+    providerMessage = String(parsed?.error?.message || "");
+    providerCode = String(parsed?.error?.code || "");
+    providerParam = String(parsed?.error?.param || "");
+  } catch {
+    providerMessage = "";
+  }
+
+  const message = providerMessage || `OpenAI request failed with status ${responseStatus}.`;
+  const error = new Error(`openai_error:${responseStatus}:${message}`);
+  error.openai = {
+    status: responseStatus,
+    message,
+    code: providerCode,
+    param: providerParam,
+    requestId: requestId || "",
+    bodyText: String(bodyText || "").slice(0, 2000),
+  };
+  return error;
+}
+
 async function generateMagicImage(imageData, styleKey) {
   const stylePrompt = MAGIC_STYLES[styleKey];
   if (!stylePrompt) {
@@ -679,58 +705,46 @@ async function generateMagicImage(imageData, styleKey) {
 
   const editsModel = "dall-e-2";
 
-  let lastError = null;
+  const model = editsModel;
+  const form = new FormData();
+  form.append("model", model);
+  form.append("prompt", stylePrompt);
+  form.append("size", "1024x1024");
+  form.append("n", "1");
+  form.append("image", new Blob([imageBuffer], { type: "image/png" }), "canvas.png");
 
-  for (const model of [editsModel]) {
-    const fieldNames = ["image", "image[]"];
+  const response = await fetch("https://api.openai.com/v1/images/edits", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: form,
+  });
 
-    for (const fieldName of fieldNames) {
-      const form = new FormData();
-      form.append("model", model);
-      form.append("prompt", stylePrompt);
-      form.append("size", "1024x1024");
-      form.append("response_format", "b64_json");
-      form.append(fieldName, new Blob([imageBuffer], { type: "image/png" }), "canvas.png");
+  if (!response.ok) {
+    const errText = await response.text();
+    const reqId = response.headers.get("x-request-id");
+    throw createOpenAiHttpError(response.status, errText, reqId);
+  }
 
-      const response = await fetch("https://api.openai.com/v1/images/edits", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-        },
-        body: form,
-      });
+  const payload = await response.json();
+  const item = payload?.data?.[0];
+  const b64 = item?.b64_json;
+  if (b64 && typeof b64 === "string") {
+    return `data:image/png;base64,${b64}`;
+  }
 
-      if (!response.ok) {
-        const errText = await response.text();
-        lastError = new Error(`openai_error:${response.status}:${errText.slice(0, 500)}`);
-        continue;
-      }
-
-      const payload = await response.json();
-      const item = payload?.data?.[0];
-      const b64 = item?.b64_json;
-      if (b64 && typeof b64 === "string") {
-        return `data:image/png;base64,${b64}`;
-      }
-
-      const imageUrl = item?.url;
-      if (imageUrl && typeof imageUrl === "string") {
-        const imageResponse = await fetch(imageUrl);
-        if (!imageResponse.ok) {
-          throw new Error("invalid_openai_image_url");
-        }
-        const arr = await imageResponse.arrayBuffer();
-        return `data:image/png;base64,${Buffer.from(arr).toString("base64")}`;
-      }
-
-      lastError = new Error("invalid_openai_response");
+  const imageUrl = item?.url;
+  if (imageUrl && typeof imageUrl === "string") {
+    const imageResponse = await fetch(imageUrl);
+    if (!imageResponse.ok) {
+      throw new Error("invalid_openai_image_url");
     }
+    const arr = await imageResponse.arrayBuffer();
+    return `data:image/png;base64,${Buffer.from(arr).toString("base64")}`;
   }
 
-  if (lastError) {
-    throw lastError;
-  }
-  throw new Error("openai_error:unknown");
+  throw new Error("invalid_openai_response");
 }
 
 async function handleRequest(req, res) {
@@ -1174,19 +1188,23 @@ async function handleRequest(req, res) {
           sendJSON(res, 503, { error: "Magic feature not configured yet." });
           return;
         }
-        if (
-          String(error.message || "").startsWith("openai_error:401") ||
-          String(error.message || "").startsWith("openai_error:403")
-        ) {
+        if (error?.openai?.status === 401 || error?.openai?.status === 403) {
           sendJSON(res, 503, { error: "Magic is unavailable. Check OpenAI API billing/verification." });
           return;
         }
-        if (String(error.message || "").startsWith("openai_error:429")) {
+        if (error?.openai?.status === 429) {
           sendJSON(res, 503, { error: "Magic is unavailable. OpenAI quota/billing limit reached." });
           return;
         }
-        if (String(error.message || "").startsWith("openai_error:400")) {
-          sendJSON(res, 422, { error: "Magic could not process this sketch. Try a clearer drawing and retry." });
+        if (error?.openai?.status === 400) {
+          const detail = String(error?.openai?.message || "Invalid image edit request.");
+          const requestId = String(error?.openai?.requestId || "");
+          const normalizedDetail = detail.length > 240 ? `${detail.slice(0, 240)}...` : detail;
+          sendJSON(res, 422, {
+            error: requestId
+              ? `Magic request rejected: ${normalizedDetail} (ref: ${requestId})`
+              : `Magic request rejected: ${normalizedDetail}`,
+          });
           return;
         }
         sendJSON(res, 502, { error: "Magic generation failed. Please try again." });
