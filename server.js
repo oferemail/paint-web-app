@@ -591,7 +591,7 @@ async function handleRequest(req, res) {
         const tokenHash = hashResetToken(token);
         const expiresAt = new Date(Date.now() + PASSWORD_RESET_TOKEN_TTL_MS);
         const userAgent = String(req.headers["user-agent"] || "").slice(0, 1024);
-        const resetLink = `${getBaseUrl(req)}/reset-password?token=${encodeURIComponent(token)}`;
+        const resetLink = `${getBaseUrl(req)}/reset-password.html?token=${encodeURIComponent(token)}`;
 
         await db.query("DELETE FROM password_reset_tokens WHERE expires_at <= NOW() OR used_at IS NOT NULL");
         await db.query(
