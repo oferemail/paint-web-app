@@ -841,7 +841,23 @@ async function generateMagicImage(imageData, styleKey, maskData = "") {
   }
 
   if (GEMINI_API_KEY) {
-    return generateMagicImageGemini(imageBuffer, stylePrompt);
+    try {
+      return await generateMagicImageGemini(imageBuffer, stylePrompt);
+    } catch (geminiError) {
+      const geminiStatus = Number(geminiError?.gemini?.status || 0);
+      const fallbackAllowed = [400, 401, 403, 404, 429, 500, 503].includes(geminiStatus);
+      if (!fallbackAllowed || !OPENAI_API_KEY) {
+        throw geminiError;
+      }
+
+      const fallbackResult = await generateMagicImageOpenAi(imageBuffer, stylePrompt, maskData);
+      return {
+        ...fallbackResult,
+        provider: "openai-fallback",
+        providerWarning:
+          "Gemini was temporarily unavailable (quota/permission/rate limit), used OpenAI fallback.",
+      };
+    }
   }
 
   return generateMagicImageOpenAi(imageBuffer, stylePrompt, maskData);

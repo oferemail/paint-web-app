@@ -391,6 +391,9 @@ magicForm.addEventListener("submit", async (event) => {
     magicCancelBtn.textContent = "Close";
     const providerNote = result.provider ? ` via ${result.provider}` : "";
     setStatus(`Magic transform complete${providerNote}. Save Painting to store it.`);
+    if (result.providerWarning) {
+      magicProgressEl.textContent = `${magicProgressEl.textContent} ${result.providerWarning}`;
+    }
   } catch (error) {
     magicErrorEl.textContent = error.message || "Magic generation failed.";
     magicErrorEl.classList.remove("hidden");
