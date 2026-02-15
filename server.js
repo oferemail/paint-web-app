@@ -677,16 +677,11 @@ async function generateMagicImage(imageData, styleKey) {
     throw new Error("invalid_image");
   }
 
-  const candidateModels = [
-    OPENAI_IMAGE_MODEL,
-    "dall-e-2",
-    "gpt-image-1",
-    "gpt-image-1-mini",
-  ].filter((value, index, all) => value && all.indexOf(value) === index);
+  const editsModel = "dall-e-2";
 
   let lastError = null;
 
-  for (const model of candidateModels) {
+  for (const model of [editsModel]) {
     const fieldNames = ["image", "image[]"];
 
     for (const fieldName of fieldNames) {

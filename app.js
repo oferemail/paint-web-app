@@ -26,6 +26,7 @@ const magicModal = document.getElementById("magic-modal");
 const magicForm = document.getElementById("magic-form");
 const magicCancelBtn = document.getElementById("magic-cancel");
 const magicRunBtn = document.getElementById("magic-run");
+const magicErrorEl = document.getElementById("magic-error");
 
 let drawing = false;
 let lastX = 0;
@@ -282,6 +283,8 @@ saveCloudBtn.addEventListener("click", async () => {
 });
 
 function openMagicModal() {
+  magicErrorEl.textContent = "";
+  magicErrorEl.classList.add("hidden");
   magicModal.classList.remove("hidden");
 }
 
@@ -313,6 +316,8 @@ magicForm.addEventListener("submit", async (event) => {
 
   magicRunBtn.disabled = true;
   magicCancelBtn.disabled = true;
+  magicErrorEl.textContent = "";
+  magicErrorEl.classList.add("hidden");
   setStatus("Generating magic image...");
 
   try {
@@ -328,6 +333,8 @@ magicForm.addEventListener("submit", async (event) => {
     closeMagicModal();
     setStatus("Magic transform complete. Save Painting to store it.");
   } catch (error) {
+    magicErrorEl.textContent = error.message || "Magic generation failed.";
+    magicErrorEl.classList.remove("hidden");
     setStatus(error.message, true);
   } finally {
     magicRunBtn.disabled = false;

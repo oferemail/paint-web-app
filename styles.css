@@ -404,6 +404,12 @@ canvas {
   gap: 10px;
 }
 
+.magic-error {
+  margin: 2px 0 0;
+  color: #b00020;
+  font-size: 0.92rem;
+}
+
 .style-option {
   display: grid;
   grid-template-columns: auto 1fr;
