@@ -709,7 +709,7 @@ async function generateMagicImage(imageData, styleKey) {
   const form = new FormData();
   form.append("model", model);
   form.append("prompt", stylePrompt);
-  form.append("size", "1024x1024");
+  form.append("size", "512x512");
   form.append("n", "1");
   form.append("image", new Blob([imageBuffer], { type: "image/png" }), "canvas.png");
 
@@ -1214,6 +1214,16 @@ async function handleRequest(req, res) {
 
     sendText(res, 404, "Not found");
   } catch (error) {
+    if (error && error.message === "Request too large") {
+      sendJSON(res, 413, {
+        error: "Magic input is too detailed/large. Try a simpler sketch and retry.",
+      });
+      return;
+    }
+    if (error && error.message === "Invalid JSON body") {
+      sendJSON(res, 400, { error: "Invalid request payload." });
+      return;
+    }
     console.error("server error", error);
     sendJSON(res, 500, { error: "Server error." });
   }

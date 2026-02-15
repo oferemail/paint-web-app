@@ -151,8 +151,9 @@ function currentCanvasData() {
 
 function buildMagicInputImageData() {
   const magicCanvas = document.createElement("canvas");
-  magicCanvas.width = 1024;
-  magicCanvas.height = 1024;
+  // Keep input compact and square for reliable API requests.
+  magicCanvas.width = 512;
+  magicCanvas.height = 512;
   const magicCtx = magicCanvas.getContext("2d");
 
   magicCtx.fillStyle = "#ffffff";
