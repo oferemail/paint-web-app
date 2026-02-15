@@ -25,11 +25,6 @@ const DATABASE_URL =
 const APP_BASE_URL = process.env.APP_BASE_URL || "";
 const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 const RESEND_FROM = process.env.RESEND_FROM || "Paint App <onboarding@resend.dev>";
-const SMTP_HOST = process.env.SMTP_HOST || "";
-const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
-const SMTP_USER = process.env.SMTP_USER || "";
-const SMTP_PASS = process.env.SMTP_PASS || "";
-const SMTP_FROM = process.env.SMTP_FROM || "";
 
 const staticFiles = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
@@ -129,14 +124,28 @@ async function ensureSchema() {
 
 function sendJSON(res, statusCode, payload, headers = {}) {
   res.writeHead(statusCode, {
+    "Cache-Control": "no-store",
     "Content-Type": "application/json; charset=utf-8",
+    "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     ...headers,
   });
   res.end(JSON.stringify(payload));
 }
 
 function sendText(res, statusCode, text) {
-  res.writeHead(statusCode, { "Content-Type": "text/plain; charset=utf-8" });
+  res.writeHead(statusCode, {
+    "Cache-Control": "no-store",
+    "Content-Type": "text/plain; charset=utf-8",
+    "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+  });
   res.end(text);
 }
 
@@ -378,6 +387,35 @@ function getBaseUrl(req) {
   return `${protocol}://${req.headers.host}`;
 }
 
+function isAllowedRequestOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin) {
+    return true;
+  }
+
+  const host = req.headers.host;
+  if (!host) {
+    return false;
+  }
+
+  const expectedHttp = `http://${host}`;
+  const expectedHttps = `https://${host}`;
+  return origin === expectedHttp || origin === expectedHttps;
+}
+
+function enforceSameOriginForWrites(req, res) {
+  if (req.method !== "POST") {
+    return true;
+  }
+
+  if (isAllowedRequestOrigin(req)) {
+    return true;
+  }
+
+  sendJSON(res, 403, { error: "Forbidden." });
+  return false;
+}
+
 async function sendPasswordResetEmail(email, resetLink) {
   const subject = "Reset your Paint app password";
   const text = [
@@ -417,23 +455,6 @@ async function sendPasswordResetEmail(email, resetLink) {
     return;
   }
 
-  if (SMTP_HOST && SMTP_USER && SMTP_PASS && SMTP_FROM) {
-    const nodemailer = require("nodemailer");
-    const transporter = nodemailer.createTransport({
-      host: SMTP_HOST,
-      port: SMTP_PORT,
-      secure: SMTP_PORT === 465,
-      auth: { user: SMTP_USER, pass: SMTP_PASS },
-    });
-
-    await transporter.sendMail({
-      from: SMTP_FROM,
-      to: email,
-      subject,
-      text,
-      html,
-    });
-  }
 }
 
 async function handleRequest(req, res) {
@@ -442,6 +463,10 @@ async function handleRequest(req, res) {
     const url = rawUrl.split("?")[0];
     const { method } = req;
 
+    if (!enforceSameOriginForWrites(req, res)) {
+      return;
+    }
+
     if (method === "GET" && staticFiles[url]) {
       const filePath = path.join(__dirname, staticFiles[url].file);
       if (!fs.existsSync(filePath)) {
@@ -449,7 +474,14 @@ async function handleRequest(req, res) {
         return;
       }
 
-      res.writeHead(200, { "Content-Type": staticFiles[url].type });
+      res.writeHead(200, {
+        "Content-Type": staticFiles[url].type,
+        "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+      });
       fs.createReadStream(filePath).pipe(res);
       return;
     }

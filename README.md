@@ -29,14 +29,14 @@ Schema is auto-created on first API request (`users` and `sessions` tables).
 Preferred (no SMTP needed): Resend API
 - `RESEND_API_KEY`
 - `RESEND_FROM` (example: `Paint App <onboarding@resend.dev>`)
-
-Optional fallback (SMTP):
 - `APP_BASE_URL` (example: `https://paint-web-app-taupe.vercel.app`)
-- `SMTP_HOST`
-- `SMTP_PORT`
-- `SMTP_USER`
-- `SMTP_PASS`
-- `SMTP_FROM` (example: `Paint App <no-reply@yourdomain.com>`)
+
+## Secret Handling
+
+- Never commit `.env` files or raw API keys
+- Store production secrets only in Vercel encrypted environment variables
+- Use separate keys per environment when possible
+- Rotate keys immediately after accidental exposure
 
 ## Run locally
 
