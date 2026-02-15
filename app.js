@@ -10,7 +10,6 @@ const authToggle = document.getElementById("auth-toggle");
 const authEmail = document.getElementById("auth-email");
 const authPassword = document.getElementById("auth-password");
 const forgotPasswordBtn = document.getElementById("forgot-password");
-const socialAuth = document.getElementById("social-auth");
 const googleLoginBtn = document.getElementById("google-login");
 
 const canvas = document.getElementById("canvas");
@@ -86,21 +85,6 @@ function setAuthMode(mode) {
     authToggle.textContent = "Need an account? Sign up";
     authPassword.autocomplete = "current-password";
     forgotPasswordBtn.classList.remove("hidden");
-  }
-}
-
-async function initSocialProviders() {
-  try {
-    const providers = await api("/api/oauth/providers");
-    if (!providers.google) {
-      socialAuth.classList.add("hidden");
-      return;
-    }
-
-    socialAuth.classList.remove("hidden");
-    googleLoginBtn.classList.toggle("hidden", !providers.google);
-  } catch {
-    socialAuth.classList.add("hidden");
   }
 }
 
@@ -296,6 +280,5 @@ authForm.addEventListener("submit", async (event) => {
     showAuth();
     setStatus("Sign in or create an account.");
     setAuthMode("signup");
-    initSocialProviders();
   }
 })();
