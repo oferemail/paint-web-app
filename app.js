@@ -9,6 +9,7 @@ const authSubmit = document.getElementById("auth-submit");
 const authToggle = document.getElementById("auth-toggle");
 const authEmail = document.getElementById("auth-email");
 const authPassword = document.getElementById("auth-password");
+const forgotPasswordBtn = document.getElementById("forgot-password");
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -75,12 +76,14 @@ function setAuthMode(mode) {
     authSubmit.textContent = "Sign Up";
     authToggle.textContent = "Already have an account? Sign in";
     authPassword.autocomplete = "new-password";
+    forgotPasswordBtn.classList.add("hidden");
   } else {
     authTitle.textContent = "Sign In";
     authSubtitle.textContent = "Welcome back. Continue your latest painting.";
     authSubmit.textContent = "Sign In";
     authToggle.textContent = "Need an account? Sign up";
     authPassword.autocomplete = "current-password";
+    forgotPasswordBtn.classList.remove("hidden");
   }
 }
 
@@ -204,6 +207,21 @@ signOutBtn.addEventListener("click", async () => {
 authToggle.addEventListener("click", () => {
   setAuthMode(authMode === "signup" ? "login" : "signup");
   setStatus("");
+});
+
+forgotPasswordBtn.addEventListener("click", async () => {
+  const email = authEmail.value.trim();
+  if (!email) {
+    setStatus("Enter your email first, then click Forgot my password.", true);
+    return;
+  }
+
+  try {
+    await api("/api/forgot-password", { method: "POST", body: { email } });
+    setStatus("If an account exists, a password reset email has been sent.");
+  } catch (error) {
+    setStatus(error.message, true);
+  }
 });
 
 authForm.addEventListener("submit", async (event) => {

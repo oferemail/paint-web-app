@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { Pool } = require("pg");
+const nodemailer = require("nodemailer");
 
 const PORT = process.env.PORT || 3000;
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
@@ -10,28 +11,48 @@ const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_MAX_ATTEMPTS = 12;
 const AUTH_FAILURE_DELAY_MS = 250;
 const AUTH_FAILURE_JITTER_MS = 250;
+const PASSWORD_RESET_TOKEN_TTL_MS = 1000 * 60 * 30;
+const PASSWORD_RESET_IP_MAX_ATTEMPTS = 8;
+const PASSWORD_RESET_EMAIL_MAX_ATTEMPTS = 5;
+const PASSWORD_RESET_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_GENERIC_ERROR = "Invalid email or password.";
+const FORGOT_GENERIC_MESSAGE = "If an account exists for that email, a reset link has been sent.";
 const DATABASE_URL =
   process.env.POSTGRES_URL ||
   process.env.DATABASE_URL ||
   process.env.POSTGRES_PRISMA_URL ||
   process.env.POSTGRES_URL_NON_POOLING ||
   "";
+const APP_BASE_URL = process.env.APP_BASE_URL || "";
+const SMTP_HOST = process.env.SMTP_HOST || "";
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_USER = process.env.SMTP_USER || "";
+const SMTP_PASS = process.env.SMTP_PASS || "";
+const SMTP_FROM = process.env.SMTP_FROM || "";
 
 const staticFiles = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/index.html": { file: "index.html", type: "text/html; charset=utf-8" },
   "/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" },
   "/app.js": { file: "app.js", type: "application/javascript; charset=utf-8" },
+  "/reset-password": { file: "reset-password.html", type: "text/html; charset=utf-8" },
+  "/reset-password.html": { file: "reset-password.html", type: "text/html; charset=utf-8" },
+  "/reset-password.js": { file: "reset-password.js", type: "application/javascript; charset=utf-8" },
 };
 
 let pool = null;
 let schemaReadyPromise = null;
+let mailer = null;
 const authAttempts = new Map();
+const resetAttempts = new Map();
 const DUMMY_PASSWORD_HASH = hashPassword("dummy-password-value");
 
 function hasDatabaseConfig() {
   return Boolean(DATABASE_URL);
+}
+
+function hasMailConfig() {
+  return Boolean(SMTP_HOST && SMTP_USER && SMTP_PASS && SMTP_FROM);
 }
 
 function getPool() {
@@ -49,6 +70,23 @@ function getPool() {
   }
 
   return pool;
+}
+
+function getMailer() {
+  if (!hasMailConfig()) {
+    return null;
+  }
+
+  if (!mailer) {
+    mailer = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_PORT === 465,
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
+    });
+  }
+
+  return mailer;
 }
 
 async function ensureSchema() {
@@ -80,8 +118,26 @@ async function ensureSchema() {
       `);
 
       await db.query(`
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          token_hash TEXT UNIQUE NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL,
+          used_at TIMESTAMPTZ,
+          requested_ip TEXT,
+          user_agent TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      await db.query(`
         CREATE INDEX IF NOT EXISTS idx_sessions_expires_at
         ON sessions (expires_at);
+      `);
+
+      await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user
+        ON password_reset_tokens (user_id, expires_at);
       `);
     })().catch((error) => {
       schemaReadyPromise = null;
@@ -163,7 +219,15 @@ function verifyPassword(password, passwordHash) {
   return crypto.timingSafeEqual(a, b);
 }
 
+function hashResetToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
 function createSessionId() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function createResetToken() {
   return crypto.randomBytes(32).toString("hex");
 }
 
@@ -236,6 +300,10 @@ function isValidPassword(value) {
   return typeof value === "string" && value.length >= 8;
 }
 
+function isValidResetToken(token) {
+  return typeof token === "string" && /^[a-f0-9]{64}$/.test(token);
+}
+
 function hasValidPngDataUrl(value) {
   return (
     typeof value === "string" &&
@@ -252,32 +320,58 @@ function getClientIp(req) {
   return req.socket?.remoteAddress || "unknown";
 }
 
-function getAuthAttemptState(ip) {
+function getAttemptState(map, key, windowMs) {
   const now = Date.now();
-  const current = authAttempts.get(ip);
+  const current = map.get(key);
 
-  if (!current || now - current.windowStart > AUTH_WINDOW_MS) {
+  if (!current || now - current.windowStart > windowMs) {
     const reset = { count: 0, windowStart: now };
-    authAttempts.set(ip, reset);
+    map.set(key, reset);
     return reset;
   }
 
   return current;
 }
 
-function isRateLimited(ip) {
-  const state = getAuthAttemptState(ip);
-  return state.count >= AUTH_MAX_ATTEMPTS;
+function isRateLimitedWithMap(map, key, windowMs, maxAttempts) {
+  const state = getAttemptState(map, key, windowMs);
+  return state.count >= maxAttempts;
+}
+
+function recordAttemptWithMap(map, key, windowMs) {
+  const state = getAttemptState(map, key, windowMs);
+  state.count += 1;
+  map.set(key, state);
+}
+
+function isAuthRateLimited(ip) {
+  return isRateLimitedWithMap(authAttempts, ip, AUTH_WINDOW_MS, AUTH_MAX_ATTEMPTS);
 }
 
 function recordAuthFailure(ip) {
-  const state = getAuthAttemptState(ip);
-  state.count += 1;
-  authAttempts.set(ip, state);
+  recordAttemptWithMap(authAttempts, ip, AUTH_WINDOW_MS);
 }
 
 function clearAuthFailures(ip) {
   authAttempts.delete(ip);
+}
+
+function isForgotRateLimited(ip, email) {
+  if (isRateLimitedWithMap(resetAttempts, `ip:${ip}`, PASSWORD_RESET_WINDOW_MS, PASSWORD_RESET_IP_MAX_ATTEMPTS)) {
+    return true;
+  }
+
+  return isRateLimitedWithMap(
+    resetAttempts,
+    `email:${email}`,
+    PASSWORD_RESET_WINDOW_MS,
+    PASSWORD_RESET_EMAIL_MAX_ATTEMPTS
+  );
+}
+
+function recordForgotAttempt(ip, email) {
+  recordAttemptWithMap(resetAttempts, `ip:${ip}`, PASSWORD_RESET_WINDOW_MS);
+  recordAttemptWithMap(resetAttempts, `email:${email}`, PASSWORD_RESET_WINDOW_MS);
 }
 
 async function applyAuthFailureDelay() {
@@ -294,6 +388,45 @@ function ensureDatabaseOrFail(res) {
     error: "Database is not configured. Set POSTGRES_URL (or DATABASE_URL).",
   });
   return false;
+}
+
+function getBaseUrl(req) {
+  if (APP_BASE_URL) {
+    return APP_BASE_URL.replace(/\/$/, "");
+  }
+
+  const protocol = req.headers["x-forwarded-proto"] || "http";
+  return `${protocol}://${req.headers.host}`;
+}
+
+async function sendPasswordResetEmail(email, resetLink) {
+  const transporter = getMailer();
+  if (!transporter) {
+    return;
+  }
+
+  const subject = "Reset your Paint app password";
+  const text = [
+    "You requested a password reset.",
+    "",
+    `Use this link (valid for 30 minutes): ${resetLink}`,
+    "",
+    "If you did not request this, you can ignore this email.",
+  ].join("\n");
+
+  const html = `
+    <p>You requested a password reset.</p>
+    <p><a href="${resetLink}">Reset password</a> (valid for 30 minutes).</p>
+    <p>If you did not request this, you can ignore this email.</p>
+  `;
+
+  await transporter.sendMail({
+    from: SMTP_FROM,
+    to: email,
+    subject,
+    text,
+    html,
+  });
 }
 
 async function handleRequest(req, res) {
@@ -324,7 +457,7 @@ async function handleRequest(req, res) {
 
     if (method === "POST" && url === "/api/signup") {
       const clientIp = getClientIp(req);
-      if (isRateLimited(clientIp)) {
+      if (isAuthRateLimited(clientIp)) {
         sendJSON(res, 429, { error: "Too many attempts. Please try again later." });
         return;
       }
@@ -348,7 +481,6 @@ async function handleRequest(req, res) {
       );
       const existingUser = existing.rows[0];
 
-      // Signup with existing credentials behaves like sign-in without revealing account existence.
       if (existingUser) {
         if (!verifyPassword(password, existingUser.password_hash)) {
           recordAuthFailure(clientIp);
@@ -391,7 +523,7 @@ async function handleRequest(req, res) {
 
     if (method === "POST" && url === "/api/login") {
       const clientIp = getClientIp(req);
-      if (isRateLimited(clientIp)) {
+      if (isAuthRateLimited(clientIp)) {
         sendJSON(res, 429, { error: "Too many attempts. Please try again later." });
         return;
       }
@@ -407,7 +539,6 @@ async function handleRequest(req, res) {
       const user = result.rows[0];
 
       if (!user || !verifyPassword(String(password || ""), user.password_hash)) {
-        // Burn comparable CPU for unknown users to reduce account-enumeration timing signals.
         if (!user) {
           verifyPassword(String(password || ""), DUMMY_PASSWORD_HASH);
         }
@@ -427,6 +558,118 @@ async function handleRequest(req, res) {
           "Set-Cookie": buildSessionCookie(req, sid, SESSION_TTL_MS / 1000),
         }
       );
+      return;
+    }
+
+    if (method === "POST" && url === "/api/forgot-password") {
+      const clientIp = getClientIp(req);
+      const { email } = await parseJSONBody(req);
+      const normalizedEmail = String(email || "").trim().toLowerCase();
+
+      if (!isEmail(normalizedEmail)) {
+        await applyAuthFailureDelay();
+        sendJSON(res, 200, { ok: true, message: FORGOT_GENERIC_MESSAGE });
+        return;
+      }
+
+      if (isForgotRateLimited(clientIp, normalizedEmail)) {
+        await applyAuthFailureDelay();
+        sendJSON(res, 200, { ok: true, message: FORGOT_GENERIC_MESSAGE });
+        return;
+      }
+
+      recordForgotAttempt(clientIp, normalizedEmail);
+
+      const db = getPool();
+      const userResult = await db.query("SELECT id, email FROM users WHERE email = $1 LIMIT 1", [
+        normalizedEmail,
+      ]);
+      const user = userResult.rows[0];
+
+      if (user) {
+        const token = createResetToken();
+        const tokenHash = hashResetToken(token);
+        const expiresAt = new Date(Date.now() + PASSWORD_RESET_TOKEN_TTL_MS);
+        const userAgent = String(req.headers["user-agent"] || "").slice(0, 1024);
+        const resetLink = `${getBaseUrl(req)}/reset-password?token=${encodeURIComponent(token)}`;
+
+        await db.query("DELETE FROM password_reset_tokens WHERE expires_at <= NOW() OR used_at IS NOT NULL");
+        await db.query(
+          `
+            INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, requested_ip, user_agent)
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [user.id, tokenHash, expiresAt, clientIp, userAgent]
+        );
+
+        try {
+          await sendPasswordResetEmail(user.email, resetLink);
+        } catch (error) {
+          console.error("password reset email send failure", error);
+        }
+      }
+
+      await applyAuthFailureDelay();
+      sendJSON(res, 200, { ok: true, message: FORGOT_GENERIC_MESSAGE });
+      return;
+    }
+
+    if (method === "POST" && url === "/api/reset-password") {
+      const { token, password } = await parseJSONBody(req);
+
+      if (!isValidResetToken(token)) {
+        sendJSON(res, 400, { error: "Invalid or expired reset link." });
+        return;
+      }
+
+      if (!isValidPassword(password)) {
+        sendJSON(res, 400, { error: "Password must be at least 8 characters." });
+        return;
+      }
+
+      const db = getPool();
+      const tokenHash = hashResetToken(token);
+      const client = await db.connect();
+
+      try {
+        await client.query("BEGIN");
+
+        const resetResult = await client.query(
+          `
+            SELECT id, user_id
+            FROM password_reset_tokens
+            WHERE token_hash = $1
+              AND used_at IS NULL
+              AND expires_at > NOW()
+            FOR UPDATE
+            LIMIT 1
+          `,
+          [tokenHash]
+        );
+
+        const row = resetResult.rows[0];
+        if (!row) {
+          await client.query("ROLLBACK");
+          sendJSON(res, 400, { error: "Invalid or expired reset link." });
+          return;
+        }
+
+        await client.query("UPDATE users SET password_hash = $1 WHERE id = $2", [
+          hashPassword(password),
+          row.user_id,
+        ]);
+        await client.query("UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1", [row.id]);
+        await client.query("DELETE FROM sessions WHERE user_id = $1", [row.user_id]);
+
+        await client.query("COMMIT");
+        sendJSON(res, 200, { ok: true });
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+
       return;
     }
 
@@ -488,6 +731,7 @@ async function handleRequest(req, res) {
 
     sendText(res, 404, "Not found");
   } catch (error) {
+    console.error("server error", error);
     sendJSON(res, 500, { error: "Server error." });
   }
 }

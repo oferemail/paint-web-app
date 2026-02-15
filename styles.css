@@ -162,3 +162,7 @@ canvas {
 .hidden {
   display: none;
 }
+
+.reset-shell {
+  max-width: 480px;
+}
