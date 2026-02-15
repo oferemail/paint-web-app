@@ -677,33 +677,62 @@ async function generateMagicImage(imageData, styleKey) {
     throw new Error("invalid_image");
   }
 
-  const form = new FormData();
-  form.append("model", OPENAI_IMAGE_MODEL);
-  form.append("prompt", stylePrompt);
-  form.append("size", "1024x1024");
-  form.append("quality", "low");
-  form.append("image", new Blob([imageBuffer], { type: "image/png" }), "canvas.png");
+  const candidateModels = [
+    OPENAI_IMAGE_MODEL,
+    "gpt-image-1",
+    "gpt-image-1-mini",
+  ].filter((value, index, all) => value && all.indexOf(value) === index);
 
-  const response = await fetch("https://api.openai.com/v1/images/edits", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: form,
-  });
+  let lastError = null;
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`openai_error:${response.status}:${errText.slice(0, 500)}`);
+  for (const model of candidateModels) {
+    const form = new FormData();
+    form.append("model", model);
+    form.append("prompt", stylePrompt);
+    form.append("size", "1024x1024");
+    form.append("quality", "low");
+    form.append("response_format", "b64_json");
+    form.append("output_format", "png");
+    form.append("image", new Blob([imageBuffer], { type: "image/png" }), "canvas.png");
+
+    const response = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: form,
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      lastError = new Error(`openai_error:${response.status}:${errText.slice(0, 500)}`);
+      continue;
+    }
+
+    const payload = await response.json();
+    const item = payload?.data?.[0];
+    const b64 = item?.b64_json;
+    if (b64 && typeof b64 === "string") {
+      return `data:image/png;base64,${b64}`;
+    }
+
+    const imageUrl = item?.url;
+    if (imageUrl && typeof imageUrl === "string") {
+      const imageResponse = await fetch(imageUrl);
+      if (!imageResponse.ok) {
+        throw new Error("invalid_openai_image_url");
+      }
+      const arr = await imageResponse.arrayBuffer();
+      return `data:image/png;base64,${Buffer.from(arr).toString("base64")}`;
+    }
+
+    lastError = new Error("invalid_openai_response");
   }
 
-  const payload = await response.json();
-  const b64 = payload?.data?.[0]?.b64_json;
-  if (!b64 || typeof b64 !== "string") {
-    throw new Error("invalid_openai_response");
+  if (lastError) {
+    throw lastError;
   }
-
-  return `data:image/png;base64,${b64}`;
+  throw new Error("openai_error:unknown");
 }
 
 async function handleRequest(req, res) {
@@ -1145,6 +1174,13 @@ async function handleRequest(req, res) {
         console.error("magic transform failure", error);
         if (String(error.message || "").startsWith("openai_not_configured")) {
           sendJSON(res, 503, { error: "Magic feature not configured yet." });
+          return;
+        }
+        if (
+          String(error.message || "").startsWith("openai_error:401") ||
+          String(error.message || "").startsWith("openai_error:403")
+        ) {
+          sendJSON(res, 503, { error: "Magic is unavailable. Check OpenAI API billing/verification." });
           return;
         }
         sendJSON(res, 502, { error: "Magic generation failed. Please try again." });
