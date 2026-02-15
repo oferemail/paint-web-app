@@ -26,6 +26,7 @@ const magicModal = document.getElementById("magic-modal");
 const magicForm = document.getElementById("magic-form");
 const magicCancelBtn = document.getElementById("magic-cancel");
 const magicRunBtn = document.getElementById("magic-run");
+const magicDownloadBtn = document.getElementById("magic-download");
 const magicErrorEl = document.getElementById("magic-error");
 const magicProgressEl = document.getElementById("magic-progress");
 const magicPreviewWrap = document.getElementById("magic-preview-wrap");
@@ -39,6 +40,7 @@ let strokeMoved = false;
 let history = [];
 let historyIndex = -1;
 const HISTORY_LIMIT = 30;
+let lastMagicImageData = "";
 
 ctx.lineCap = "round";
 ctx.lineJoin = "round";
@@ -288,6 +290,7 @@ saveCloudBtn.addEventListener("click", async () => {
 
 function openMagicModal() {
   magicCancelBtn.textContent = "Cancel";
+  magicDownloadBtn.classList.add("hidden");
   magicErrorEl.textContent = "";
   magicErrorEl.classList.add("hidden");
   magicProgressEl.textContent = "";
@@ -307,6 +310,17 @@ magicBtn.addEventListener("click", () => {
 
 magicCancelBtn.addEventListener("click", () => {
   closeMagicModal();
+});
+
+magicDownloadBtn.addEventListener("click", () => {
+  if (!lastMagicImageData) {
+    return;
+  }
+
+  const a = document.createElement("a");
+  a.download = "magic-result.png";
+  a.href = lastMagicImageData;
+  a.click();
 });
 
 magicModal.addEventListener("click", (event) => {
@@ -343,8 +357,10 @@ magicForm.addEventListener("submit", async (event) => {
       throw new Error("Magic API returned an invalid image payload.");
     }
 
+    lastMagicImageData = result.imageData;
     magicPreview.src = result.imageData;
     magicPreviewWrap.classList.remove("hidden");
+    magicDownloadBtn.classList.remove("hidden");
     magicProgressEl.textContent = "Image generated. Applying to canvas...";
 
     await drawSnapshot(result.imageData);
