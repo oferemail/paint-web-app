@@ -14,30 +14,21 @@
     </header>
 
     <section id="auth" class="auth" aria-label="Authentication">
-      <div class="card">
-        <h2>Sign In</h2>
-        <form id="login-form">
-          <label for="login-email">Email</label>
-          <input id="login-email" type="email" required autocomplete="email" />
+      <div class="auth-card">
+        <h2 id="auth-title">Create Account</h2>
+        <p id="auth-subtitle" class="auth-subtitle">Start drawing and save your progress.</p>
+        <form id="auth-form">
+          <label for="auth-email">Email</label>
+          <input id="auth-email" type="email" required autocomplete="email" />
 
-          <label for="login-password">Password</label>
-          <input id="login-password" type="password" required autocomplete="current-password" />
+          <label for="auth-password">Password</label>
+          <input id="auth-password" type="password" minlength="8" required autocomplete="new-password" />
 
-          <button type="submit">Sign In</button>
+          <button id="auth-submit" type="submit">Sign Up</button>
         </form>
-      </div>
-
-      <div class="card">
-        <h2>Sign Up</h2>
-        <form id="signup-form">
-          <label for="signup-email">Email</label>
-          <input id="signup-email" type="email" required autocomplete="email" />
-
-          <label for="signup-password">Password</label>
-          <input id="signup-password" type="password" minlength="8" required autocomplete="new-password" />
-
-          <button type="submit">Create Account</button>
-        </form>
+        <button id="auth-toggle" class="link-button" type="button">
+          Already have an account? Sign in
+        </button>
       </div>
     </section>
 

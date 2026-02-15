@@ -2,8 +2,13 @@ const authSection = document.getElementById("auth");
 const paintSection = document.getElementById("paint");
 const statusEl = document.getElementById("status");
 
-const loginForm = document.getElementById("login-form");
-const signupForm = document.getElementById("signup-form");
+const authForm = document.getElementById("auth-form");
+const authTitle = document.getElementById("auth-title");
+const authSubtitle = document.getElementById("auth-subtitle");
+const authSubmit = document.getElementById("auth-submit");
+const authToggle = document.getElementById("auth-toggle");
+const authEmail = document.getElementById("auth-email");
+const authPassword = document.getElementById("auth-password");
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -17,6 +22,7 @@ const signOutBtn = document.getElementById("signout");
 let drawing = false;
 let lastX = 0;
 let lastY = 0;
+let authMode = "signup";
 
 ctx.lineCap = "round";
 ctx.lineJoin = "round";
@@ -58,6 +64,24 @@ function showAuth() {
 function showPaint() {
   authSection.classList.add("hidden");
   paintSection.classList.remove("hidden");
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+
+  if (mode === "signup") {
+    authTitle.textContent = "Create Account";
+    authSubtitle.textContent = "Start drawing and save your progress.";
+    authSubmit.textContent = "Sign Up";
+    authToggle.textContent = "Already have an account? Sign in";
+    authPassword.autocomplete = "new-password";
+  } else {
+    authTitle.textContent = "Sign In";
+    authSubtitle.textContent = "Welcome back. Continue your latest painting.";
+    authSubmit.textContent = "Sign In";
+    authToggle.textContent = "Need an account? Sign up";
+    authPassword.autocomplete = "current-password";
+  }
 }
 
 function pointFromEvent(event) {
@@ -177,29 +201,47 @@ signOutBtn.addEventListener("click", async () => {
   }
 });
 
-signupForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const email = document.getElementById("signup-email").value.trim();
-  const password = document.getElementById("signup-password").value;
-
-  try {
-    await api("/api/signup", { method: "POST", body: { email, password } });
-    await handleAuthSuccess(email);
-    signupForm.reset();
-  } catch (error) {
-    setStatus(error.message, true);
-  }
+authToggle.addEventListener("click", () => {
+  setAuthMode(authMode === "signup" ? "login" : "signup");
+  setStatus("");
 });
 
-loginForm.addEventListener("submit", async (event) => {
+authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const email = document.getElementById("login-email").value.trim();
-  const password = document.getElementById("login-password").value;
+  const email = authEmail.value.trim();
+  const password = authPassword.value;
+
+  if (!email || !password) return;
+
+  if (authMode === "signup") {
+    try {
+      await api("/api/signup", { method: "POST", body: { email, password } });
+      await handleAuthSuccess(email);
+      authForm.reset();
+      return;
+    } catch (error) {
+      if (error.message === "Account already exists.") {
+        try {
+          await api("/api/login", { method: "POST", body: { email, password } });
+          await handleAuthSuccess(email);
+          authForm.reset();
+          setStatus("Account already exists. Signed in instead.");
+          return;
+        } catch {
+          setStatus("Account exists. Password is incorrect.", true);
+          setAuthMode("login");
+          return;
+        }
+      }
+      setStatus(error.message, true);
+      return;
+    }
+  }
 
   try {
     await api("/api/login", { method: "POST", body: { email, password } });
     await handleAuthSuccess(email);
-    loginForm.reset();
+    authForm.reset();
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -212,5 +254,6 @@ loginForm.addEventListener("submit", async (event) => {
   } catch {
     showAuth();
     setStatus("Sign in or create an account.");
+    setAuthMode("signup");
   }
 })();

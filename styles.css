@@ -4,6 +4,8 @@
   --ink: #101418;
   --border: #d7dee5;
   --primary: #0b6bcb;
+  --muted: #5f6870;
+  --ring: rgba(11, 107, 203, 0.2);
 }
 
 * {
@@ -51,19 +53,21 @@ h2 {
   min-height: 1.2em;
   margin: 0;
   font-size: 0.9rem;
-  color: #5f6870;
+  color: var(--muted);
 }
 
 .auth {
   display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  place-items: center;
 }
 
-.card {
+.auth-card {
+  width: min(420px, 100%);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px;
+  border-radius: 14px;
+  padding: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f9fbfd 100%);
+  box-shadow: 0 10px 30px rgba(11, 19, 34, 0.08);
 }
 
 form {
@@ -76,8 +80,21 @@ input[type="password"] {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 8px;
+  padding: 10px;
   font: inherit;
+  outline: none;
+}
+
+input[type="email"]:focus,
+input[type="password"]:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.auth-subtitle {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.92rem;
 }
 
 .toolbar {
@@ -117,6 +134,20 @@ button[type="submit"],
 button[type="submit"]:hover,
 #save-cloud:hover {
   background: #0959a8;
+}
+
+.link-button {
+  margin-top: 10px;
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  text-align: left;
+  padding: 0;
+}
+
+.link-button:hover {
+  background: transparent;
+  text-decoration: underline;
 }
 
 canvas {
