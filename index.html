@@ -14,27 +14,59 @@
     </header>
 
     <section id="auth" class="auth" aria-label="Authentication">
-      <div class="auth-card">
-        <h2 id="auth-title">Create Account</h2>
-        <p id="auth-subtitle" class="auth-subtitle">Start drawing and save your progress.</p>
-        <form id="auth-form">
-          <label for="auth-email">Email</label>
-          <input id="auth-email" type="email" required autocomplete="email" />
+      <div class="landing-grid">
+        <article class="hero">
+          <p class="hero-kicker">Create • Save • Continue</p>
+          <h2 class="hero-title">Turn Ideas Into Bold Digital Art In Seconds</h2>
+          <p class="hero-text">
+            Paintflow keeps every brush stroke in sync with your account so your canvas is always waiting when you come back.
+          </p>
+          <ul class="hero-points">
+            <li>Cloud-saved paintings per user</li>
+            <li>One-click Google sign in</li>
+            <li>Password recovery and secure sessions</li>
+          </ul>
+          <div class="hero-badge-row">
+            <span class="hero-badge">Realtime Feel</span>
+            <span class="hero-badge">Persistent Canvas</span>
+            <span class="hero-badge">Secure Auth</span>
+          </div>
+          <div class="hero-visual" aria-hidden="true">
+            <span class="orb orb-a"></span>
+            <span class="orb orb-b"></span>
+            <span class="orb orb-c"></span>
+            <div class="mock-canvas">
+              <span class="stroke stroke-a"></span>
+              <span class="stroke stroke-b"></span>
+              <span class="stroke stroke-c"></span>
+            </div>
+          </div>
+        </article>
 
-          <label for="auth-password">Password</label>
-          <input id="auth-password" type="password" minlength="8" required autocomplete="new-password" />
+        <div class="auth-shell">
+          <div class="auth-card">
+            <h2 id="auth-title">Create Account</h2>
+            <p id="auth-subtitle" class="auth-subtitle">Start drawing and save your progress.</p>
+            <form id="auth-form">
+              <label for="auth-email">Email</label>
+              <input id="auth-email" type="email" required autocomplete="email" />
 
-          <button id="auth-submit" type="submit">Sign Up</button>
-        </form>
-        <div id="social-auth" class="social-auth" aria-label="Social sign in">
-          <button id="google-login" type="button" class="social-btn">Continue with Google</button>
+              <label for="auth-password">Password</label>
+              <input id="auth-password" type="password" minlength="8" required autocomplete="new-password" />
+
+              <button id="auth-submit" type="submit">Sign Up</button>
+            </form>
+            <div id="social-auth" class="social-auth" aria-label="Social sign in">
+              <button id="google-login" type="button" class="social-btn">Continue with Google</button>
+            </div>
+            <button id="forgot-password" class="link-button hidden" type="button">
+              Forgot my password
+            </button>
+            <button id="auth-toggle" class="link-button" type="button">
+              Already have an account? Sign in
+            </button>
+          </div>
         </div>
-        <button id="forgot-password" class="link-button hidden" type="button">
-          Forgot my password
-        </button>
-        <button id="auth-toggle" class="link-button" type="button">
-          Already have an account? Sign in
-        </button>
       </div>
     </section>
 
